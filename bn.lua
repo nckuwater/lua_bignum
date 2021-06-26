@@ -11,6 +11,15 @@ function new_bn()
     return bn
 end
 
+function bn_copy(a, b)
+    bn_expand(a, b)
+    for i=1, b.top do
+        a.d[i] = b.d[i]
+    end
+    a.neg = b.neg
+    return a
+end
+
 function hex2bn(hex)
     local bn = new_bn()
     local len = string.len(hex)
@@ -348,6 +357,14 @@ function bn_mul(r,a,b)
     ret = bn_mul_fixed_top(r,a,b)
     bn_check_top(r)
     return ret
+end
+
+function bn_div_fixed_top(dv, rm, num, divisor)
+    -- dv must be table not nil
+    -- rm can be nil
+    -- no change to num, divisor
+    local snum, sdiv
+
 end
 
 
