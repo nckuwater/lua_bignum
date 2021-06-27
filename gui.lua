@@ -174,6 +174,21 @@ function mainloop(win)
             end
         end
 
+        if event == 'timer' then
+            -- e1 is timer_id
+            if win.timer[e1] ~= nil then
+                local keep_timer = win.timer[e1](event,e1)
+                if keep_timer then
+                    local new_timer_id = os.startTimer(1)
+                    local tmp_funct = win.timer[e1]
+                    win.timer[new_timer_id] = tmp_funct
+                end
+                if e1 ~= new_timer_id then
+                    win.timer[e1]=nil
+                end
+            end
+        end
+
         --parallel.waitForAny(unpack(todo_event))
         for i, ev in pairs(todo_event) do
             ev()
@@ -209,6 +224,7 @@ function new_window(x,y,widget,parent,w,h)
 
     win.window = window.create(parent, win.x, win.y, w, h)
     win.eventDelegate = {} -- a event-function table called by mainloop
+    win.timer = {}
     return win
 end
 
@@ -259,7 +275,34 @@ function BtnUp(self, event,e1,e2,e3)
 end
 
 function event_label_update(self, event,e1,e2,e3)
-    self.text = event
+    self.text = event..' '..(e1 or '')..' '..(e2 or '')..' '..(e3 or '')
+end
+
+function ttime(widget, event, e1)
+    if widget.timecount == nil then
+        widget.timecount = 0
+    end
+    --widget.text = tostring(widget.timecount)
+    widget.text = os.date()
+    widget.timecount=widget.timecount+1
+    return true
+end
+
+function addtimer(win, funct, period)
+    -- register a timer from os
+    -- store the timer_id:funct in win
+    -- deal this in os.pullEvent
+    -- the funct should return true to keep the timer running, otherwise it will be cancelled
+    local timer_id = os.startTimer(period)
+    win.timer[timer_id] = funct -- event,e1,e2,e3
+end
+
+function stopwindow(win)
+    for i,t in pairs(win.timer) do
+        if t~= nil then
+            os.cancelTimer(i)
+        end
+    end
 end
 
 function test()
@@ -267,16 +310,24 @@ function test()
     lab1c1 = {x=2,y=2,w=10,h=10,name='child1', text='btn'}
     event_label = {x=10,y=10,w=20,h=1, name='event display', text='Waiting', bc=colors.lightBlue}
     clicked_display = {x=10,y=12,w=20,h=1, name='clicked display', text='Waiting', bc=colors.lightBlue}
+    date_label = {x=32,y=19,w=20,h=1, name='date_label', text=os.date(), bc=colors.white, tc=colors.black}
 
     win = new_window(1,1)
     addwidget(win, lab1)
     addwidget(lab1, lab1c1)
     addwidget(win, event_label)
     addwidget(win, clicked_display)
+    addwidget(win, date_label)
     lab1c1.OnMouseClick = function(e,e1,e2,e3) BtnClick(lab1c1, e,e1,e2,e3) end
     lab1c1.OnMouseUp = function(e,e1,e2,e3) BtnUp(lab1c1, e,e1,e2,e3) end
 
     bind(win, 'all', event_label, event_label_update)
+    addtimer(win, function(e,e1) return ttime(date_label, e,e1)end, 1)
     mainloop(win)
+    stopwindow(win)
+    --parallel.waitForAll(function() mainloop(win)end, function() ttime(lab1c1)end)
 end
+
+
+
 test()
