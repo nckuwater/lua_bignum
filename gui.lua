@@ -25,7 +25,7 @@ function getposwidget(widget, x, y)
     local i,w,res
     if widget.child ~= nil then
         for i,child in pairs(widget.child) do
-            res = getposwidget(child, widget.x-x+1, widget.y-y+1)
+            res = getposwidget(child, x-widget.x+1, y-widget.y+1)
             if res ~= nil then
                 -- child or its child is the target
                 return res
@@ -46,7 +46,7 @@ function getposfocusablewidget(widget, x, y)
     local i,w,res
     if widget.child ~= nil then
         for i,child in pairs(widget.child) do
-            res = getposwidget(child, widget.x-x+1, widget.y-y+1)
+            res = getposwidget(child, x-widget.x+1, y-widget.y+1)
             if res ~= nil and res.focusable==true then
                 -- child or its child is the target
                 return res
@@ -62,14 +62,14 @@ end
 
 function getwinposwidget(win, x, y) 
     local res, focus_res=nil,nil
-    x = x+win.x
-    y = y+win.y
-    if win.widget~=nil then
-        for i,w in pairs(win.widget) do
+    x = x-win.x+1
+    y = y-win.y+1
+    if win.child~=nil then
+        for i,w in pairs(win.child) do
             res = getposwidget(w, x, y)
             if res ~= nil then break end
         end
-        for i,w in pairs(win.widget) do
+        for i,w in pairs(win.child) do
             focus_res = getposfocusablewidget(w, x, y)
             if focus_res ~= nil then break end
         end
@@ -111,7 +111,6 @@ function mainloop(win)
 
     while not FLAG_EXIT do
         local event, e1, e2, e3 = os.pullEvent()
-        local clicked_widget
         if event == 'mouse_click' then
             clicked_widget, clicked_focusable_widget = getwinposwidget(win, e2, e3)
             prev_drag_widget = clicked_widget
@@ -125,7 +124,9 @@ function mainloop(win)
             -- signal
             if clicked_widget~=nil then
                 nilcall(clicked_widget.OnMouseClick, event, e1, e2, e3)
+                clicked_display.text = clicked_widget.name or 'NIL'
             end
+            
         
         elseif event == 'mouse_up' then
             clicked_widget, clicked_focusable_widget = getwinposwidget(win, e2, e3)
@@ -134,6 +135,7 @@ function mainloop(win)
             if clicked_widget ~= nil then
                 nilcall(clicked_widget.OnMouseUp, event,e1,e2,e3)
             end 
+            clicked_widget=nil
         
         elseif event == 'mouse_drag' then
             dragged_widget, dragged_focusable_widget = getwinposwidget(win, e2, e3)
@@ -157,18 +159,31 @@ function mainloop(win)
             nilcall(focusing_widget.OnPaste, event,e1,e2,e3)
         end
         -- BroadCast Signal
-        local i, func
+        local i, func, todo_event
+        todo_event={function()return 0 end}
         if win.eventDelegate[event] ~= nil then
             for i, func in pairs(win.eventDelegate[event]) do
-                nilcall(func, event,e1,e2,e3)
+                --nilcall(func, event,e1,e2,e3)
+                table.insert(todo_event, function() func(event,e1,e2,e3) end)
             end
+        end
+        if win.eventDelegate['all'] ~= nil then
+            for i, func in pairs(win.eventDelegate['all']) do
+                --nilcall(func, event,e1,e2,e3)
+                table.insert(todo_event, function() func(event,e1,e2,e3) end)
+            end
+        end
+
+        --parallel.waitForAny(unpack(todo_event))
+        for i, ev in pairs(todo_event) do
+            ev()
         end
 
         -- Render --
         term.clear()
         renderwidget(win)
-        --win.window.write(' '..event..' '..e1)
-        if event=='key_up' and e1==keys.leftShift then
+
+        if event=='key_up' and e1==keys.tab then
             FLAG_EXIT=true
             term.clear()
             term.setCursorPos(1,1)
@@ -222,18 +237,46 @@ function new_widget(x,y,w,h)
         x=x,y=y,w=w,h=h,
         window=window.create(term.current(),x,y,w,h)
     }
+end
 
+function bind(win, event, widget, func) 
+    local func2 = function(e,e1,e2,e3) func(widget,e,e1,e2,e3) end
+    if win.eventDelegate[event]==nil then
+        win.eventDelegate[event] = {func2}
+    else
+        table.insert(win.eventDelegate[event], func2)
+    end
+end
 
+function BtnClick(self, event,e1,e2,e3)
+    self.text='clicked'
+    self.bc=colors.yellow
+end
+
+function BtnUp(self, event,e1,e2,e3)
+    self.text='up'
+    self.bc=colors.white
+end
+
+function event_label_update(self, event,e1,e2,e3)
+    self.text = event
 end
 
 function test()
-
     lab1 = {x=2,y=2,w=20, h=20,name='label1', text='im label1', bc=colors.white}
-    lab1c1 = {x=2,y=2,w=10,h=10,name='child1', text='pppp'}
+    lab1c1 = {x=2,y=2,w=10,h=10,name='child1', text='btn'}
+    event_label = {x=10,y=10,w=20,h=1, name='event display', text='Waiting', bc=colors.lightBlue}
+    clicked_display = {x=10,y=12,w=20,h=1, name='clicked display', text='Waiting', bc=colors.lightBlue}
 
     win = new_window(1,1)
     addwidget(win, lab1)
     addwidget(lab1, lab1c1)
+    addwidget(win, event_label)
+    addwidget(win, clicked_display)
+    lab1c1.OnMouseClick = function(e,e1,e2,e3) BtnClick(lab1c1, e,e1,e2,e3) end
+    lab1c1.OnMouseUp = function(e,e1,e2,e3) BtnUp(lab1c1, e,e1,e2,e3) end
+
+    bind(win, 'all', event_label, event_label_update)
     mainloop(win)
 end
 test()
