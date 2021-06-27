@@ -106,7 +106,7 @@ function mainloop(win)
     FLAG_EXIT = false
     focused_widget = nil
     clicked_widget = nil
-    focusing_widget = nil
+    focusing_widget = win -- default win
     prev_drag_widget = nil
 
     while not FLAG_EXIT do
@@ -118,25 +118,24 @@ function mainloop(win)
             -- update focusing widget
             if clicked_focusable_widget~=nil then
                 focusing_widget = clicked_focusable_widget
+            else
+                focusing_widget = win
             end
-            -- just test
-            win.window.reposition(e2,e3)
-            --/just test
 
             -- signal
             if clicked_widget~=nil then
                 nilcall(clicked_widget.OnMouseClick, event, e1, e2, e3)
             end
-        end
-        if event == 'mouse_up' then
+        
+        elseif event == 'mouse_up' then
             clicked_widget, clicked_focusable_widget = getwinposwidget(win, e2, e3)
 
             -- signal
             if clicked_widget ~= nil then
                 nilcall(clicked_widget.OnMouseUp, event,e1,e2,e3)
             end 
-        end
-        if event == 'mouse_drag' then
+        
+        elseif event == 'mouse_drag' then
             dragged_widget, dragged_focusable_widget = getwinposwidget(win, e2, e3)
             if dragged_widget~=prev_drag_widget then
                 if prev_drag_widget ~= nil then
@@ -145,8 +144,23 @@ function mainloop(win)
                 end
                 if dragged_widget ~= nil then
                     -- drag in
-                    nilcall(dragged_widget.OnDragOut, event,e1,e2,e3)
+                    nilcall(dragged_widget.OnDragIn, event,e1,e2,e3)
                 end
+            end
+        elseif event == 'key' then
+            nilcall(focusing_widget.OnKey, event,e1,e2,e3)
+        elseif event == 'key_up' then
+            nilcall(focusing_widget.OnKeyUp, event,e1,e2,e3)
+        elseif event == 'char' then
+            nilcall(focusing_widget.OnChar, event,e1,e2,e3)
+        elseif event == 'paste' then
+            nilcall(focusing_widget.OnPaste, event,e1,e2,e3)
+        end
+        -- BroadCast Signal
+        local i, func
+        if win.eventDelegate[event] ~= nil then
+            for i, func in pairs(win.eventDelegate[event]) do
+                nilcall(func, event,e1,e2,e3)
             end
         end
 
@@ -154,7 +168,7 @@ function mainloop(win)
         term.clear()
         renderwidget(win)
         --win.window.write(' '..event..' '..e1)
-        if event=='key_up' and e1==15 then
+        if event=='key_up' and e1==keys.leftShift then
             FLAG_EXIT=true
             term.clear()
             term.setCursorPos(1,1)
@@ -179,6 +193,7 @@ function new_window(x,y,widget,parent,w,h)
     win.child=widget
 
     win.window = window.create(parent, win.x, win.y, w, h)
+    win.eventDelegate = {} -- a event-function table called by mainloop
     return win
 end
 
