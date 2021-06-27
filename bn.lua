@@ -96,9 +96,10 @@ function bn_check_top(bn)
     return bn
 end
 
-function bn_add_words(r, a, b, n)
+function bn_add_words(r, ir, a, ia, b, ib, n)
     -- r is pre allocated table
-    local ll,ia,ib,ir = 0, 1, 1, 1
+    --local ll,ia,ib,ir = 0, 1, 1, 1
+    local ll=0
     while n ~= 0 do
         ll = ll + (a[ia] + b[ib])
         r[ir] = bit.band(ll, BN_MASK2)
@@ -111,9 +112,9 @@ function bn_add_words(r, a, b, n)
     return ll
 end
 
-function bn_sub_words(r, a, b, n)
+function bn_sub_words(r, ir, a, ia, b, ib, n)
     -- r is pre allocated table
-    local ia,ib,ir = 1, 1, 1
+    --local ia,ib,ir = 1, 1, 1
     local t1, t2
     local c = 0
     while n ~= 0 do
@@ -155,7 +156,7 @@ function bn_uadd(r, a, b)
     bp = b.d
     rp = r.d
 
-    carry = bn_add_words(rp, ap, bp, min)
+    carry = bn_add_words(rp, 1, ap, 1, bp, 1, min)
     ir = min + 1
     ia = min + 1
 
@@ -198,7 +199,7 @@ function bn_usub(r, a, b)
     bp = b.d
     rp = r.d
 
-    borrow = bn_sub_words(rp, ap, bp, min);
+    borrow = bn_sub_words(rp, 1, ap, 1, bp, 1, min);
     ia = ia+min;
     ib = ib+min;
 
@@ -363,7 +364,21 @@ function bn_div_fixed_top(dv, rm, num, divisor)
     -- dv must be table not nil
     -- rm can be nil
     -- no change to num, divisor
-    local snum, sdiv
+    local snum, sdiv = new_bn(), new_bn()
+    bn_copy(snum, num)
+    bn_copy(sdiv, div)
+    local div_n, num_n=sdiv.top, snum.top
+    local loop=num_n-div_n
+    local q
+    local tmp=new_bn()
+    bn_expand(tmp, div_n+1) -- q*div
+    loop = loop+1
+    local inum, idiv=snum.top, sdiv.top
+    for i=0,loop do
+        q = math.ceil(snum[inum] / sdiv[idiv])
+        
+    end
+
 
 end
 
