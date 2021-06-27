@@ -8,6 +8,17 @@ function containpos(widget, x, y)
     return false
 end
 
+function nilcheck(x, val)
+    if x==nil then return val else return x end
+end
+
+function nilcall(f, ...)
+    local args={...}
+    if f~=nil then
+        f(table.unpack(args))
+    end
+end
+
 function getposwidget(widget, x, y)
     -- this x, y is base on parent coordinate
     -- first, check if child is valid
@@ -28,22 +39,22 @@ function getposwidget(widget, x, y)
     return nil
 end
 
-function getposfocussablewidget(widget, x, y)
-    -- this is try to find the lowest clicked focussable widget
+function getposfocusablewidget(widget, x, y)
+    -- this is try to find the lowest clicked focusable widget
     -- this x, y is base on parent coordinate
     -- first, check if child is valid
     local i,w,res
     if widget.child ~= nil then
         for i,child in pairs(widget.child) do
             res = getposwidget(child, widget.x-x+1, widget.y-y+1)
-            if res ~= nil and res.focussable==true then
+            if res ~= nil and res.focusable==true then
                 -- child or its child is the target
                 return res
             end
         end
     end
     -- second, if no child valid, check self
-    if containpos(widget, x, y) and widget.focussable==true then
+    if containpos(widget, x, y) and widget.focusable==true then
         return widget
     end
     return nil
@@ -59,7 +70,7 @@ function getwinposwidget(win, x, y)
             if res ~= nil then break end
         end
         for i,w in pairs(win.widget) do
-            focus_res = getposfocussablewidget(w, x, y)
+            focus_res = getposfocusablewidget(w, x, y)
             if focus_res ~= nil then break end
         end
     end
@@ -74,6 +85,7 @@ function renderwidget(widget)
         else
             widget.window.setBackgroundColor(widget.bc)
         end
+        widget.window.setTextColor(widget.tc or colors.green)
         widget.window.clear()
         widget.window.redraw()
         widget.window.setCursorPos(1,1)
@@ -92,19 +104,53 @@ end
 
 function mainloop(win)
     FLAG_EXIT = false
+    focused_widget = nil
+    clicked_widget = nil
+    focusing_widget = nil
+    prev_drag_widget = nil
+
     while not FLAG_EXIT do
         local event, e1, e2, e3 = os.pullEvent()
         local clicked_widget
         if event == 'mouse_click' then
-            clicked_widget, clicked_focussable_widget = getwinposwidget(win, e2, e3)
-            
-            if clicked_focussable_widget ~= nil then
-                print(textutils.serialiseJSON(clicked_widget))
-            else
-                print('nil')
+            clicked_widget, clicked_focusable_widget = getwinposwidget(win, e2, e3)
+            prev_drag_widget = clicked_widget
+            -- update focusing widget
+            if clicked_focusable_widget~=nil then
+                focusing_widget = clicked_focusable_widget
             end
+            -- just test
             win.window.reposition(e2,e3)
+            --/just test
+
+            -- signal
+            if clicked_widget~=nil then
+                nilcall(clicked_widget.OnMouseClick, event, e1, e2, e3)
+            end
         end
+        if event == 'mouse_up' then
+            clicked_widget, clicked_focusable_widget = getwinposwidget(win, e2, e3)
+
+            -- signal
+            if clicked_widget ~= nil then
+                nilcall(clicked_widget.OnMouseUp, event,e1,e2,e3)
+            end 
+        end
+        if event == 'mouse_drag' then
+            dragged_widget, dragged_focusable_widget = getwinposwidget(win, e2, e3)
+            if dragged_widget~=prev_drag_widget then
+                if prev_drag_widget ~= nil then
+                    -- drag out
+                    nilcall(prev_drag_widget.OnDragOut, event,e1,e2,e3)
+                end
+                if dragged_widget ~= nil then
+                    -- drag in
+                    nilcall(dragged_widget.OnDragOut, event,e1,e2,e3)
+                end
+            end
+        end
+
+        -- Render --
         term.clear()
         renderwidget(win)
         --win.window.write(' '..event..' '..e1)
@@ -150,16 +196,19 @@ function addwidget(parent, widget)
     end
 end
 
-function nilcheck(x, val)
-    if x==nil then return val else return x end
-end
-
 function new_widget(x,y,w,h)
-    local widget = {}
+    -- parent mainly connect in addwidget function
+    -- now just assume it's connected term
     x = nilcheck(x, 1)
     y = nilcheck(y, 1)
     w = nilcheck(w, 1)
     h = nilcheck(h, 1)
+    local widget = {
+        x=x,y=y,w=w,h=h,
+        window=window.create(term.current(),x,y,w,h)
+    }
+
+
 end
 
 function test()
