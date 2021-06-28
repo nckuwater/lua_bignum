@@ -99,51 +99,57 @@ function renderwidget(widget)
 end
 
 function handlewindowevent(win, event,e1,e2,e3)
-
     -- handle the event to a window and its subwindows
     if event == 'mouse_click' then
-        clicked_widget, clicked_focusable_widget = getwinposwidget(win, e2, e3)
-        prev_drag_widget = clicked_widget
+        win.clicked_widget, win.clicked_focusable_widget = getwinposwidget(win, e2, e3)
+        win.prev_drag_widget = win.clicked_widget
         -- update focusing widget
-        if clicked_focusable_widget~=nil then
-            focusing_widget = clicked_focusable_widget
+        if win.clicked_focusable_widget~=nil then
+            win.focusing_widget = win.clicked_focusable_widget
         else
-            focusing_widget = win
+            win.focusing_widget = win
         end
-        
+        -- signal
+        if win.clicked_widget ~= nil then
+            nilcall(win.clicked_widget.OnMouseClick, event,e1,e2,e3)
+        end 
     
     elseif event == 'mouse_up' then
-        clicked_widget, clicked_focusable_widget = getwinposwidget(win, e2, e3)
+        win.clicked_widget, win.clicked_focusable_widget = getwinposwidget(win, e2, e3)
 
         -- signal
-        if clicked_widget ~= nil then
-            nilcall(clicked_widget.OnMouseUp, event,e1,e2,e3)
+        if win.clicked_widget ~= nil then
+            nilcall(win.clicked_widget.OnMouseUp, event,e1,e2,e3)
         end 
-        clicked_widget=nil
+        win.clicked_widget=nil
     
     elseif event == 'mouse_drag' then
-        dragged_widget, dragged_focusable_widget = getwinposwidget(win, e2, e3)
-        if dragged_widget~=prev_drag_widget then
-            if prev_drag_widget ~= nil then
+        win.dragged_widget, win.dragged_focusable_widget = getwinposwidget(win, e2, e3)
+        if win.dragged_widget~=win.prev_drag_widget then
+            if win.prev_drag_widget ~= nil then
                 -- drag out
-                nilcall(prev_drag_widget.OnDragOut, event,e1,e2,e3)
+                nilcall(win.prev_drag_widget.OnDragOut, event,e1,e2,e3)
             end
-            if dragged_widget ~= nil then
+            if win.dragged_widget ~= nil then
                 -- drag in
-                nilcall(dragged_widget.OnDragIn, event,e1,e2,e3)
+                nilcall(win.dragged_widget.OnDragIn, event,e1,e2,e3)
             end
+        elseif win.dragged_widget~=nil then
+            -- dragging
+            nilcall(win.dragged_widget.OnDrag ,event,e1,e2,e3)
         end
-        prev_drag_widget = dragged_widget
+    
+        win.prev_drag_widget = win.dragged_widget
     elseif event == 'key' then
-        nilcall(focusing_widget.OnKey, event,e1,e2,e3)
+        nilcall(win.focusing_widget.OnKey, event,e1,e2,e3)
     elseif event == 'key_up' then
-        nilcall(focusing_widget.OnKeyUp, event,e1,e2,e3)
+        nilcall(win.focusing_widget.OnKeyUp, event,e1,e2,e3)
     elseif event == 'char' then
-        nilcall(focusing_widget.OnChar, event,e1,e2,e3)
+        nilcall(win.focusing_widget.OnChar, event,e1,e2,e3)
     elseif event == 'paste' then
-        nilcall(focusing_widget.OnPaste, event,e1,e2,e3)
+        nilcall(win.focusing_widget.OnPaste, event,e1,e2,e3)
     elseif event == 'mouse_scroll' then
-        nilcall(focusing_widget.OnMouseScroll, event,e1,e2,e3)
+        nilcall(win.focusing_widget.OnMouseScroll, event,e1,e2,e3)
     end
     -- BroadCast Signal
     local i, func, todo_event
@@ -194,143 +200,57 @@ function handlewindowevent(win, event,e1,e2,e3)
     end
 
     -- Recursive Part
-    --if win.child ~= nil then
-    --    for i,child in pairs(win.child) do
-    --        handlewindowevent(child, event,e1,e2,e3)
-    --    end
-    --end
+    if win.child ~= nil then
+        for i,child in pairs(win.child) do
+            -- check if child is a window
+            if child.is_window then
+                handlewindowevent(child, event,e1,e2,e3)
+            end
+       end
+    end
+
 
 end
 
 function mainloop(win)
-    FLAG_EXIT = false
-    focused_widget = nil
-    clicked_widget = nil
-    focusing_widget = win -- default win
-    prev_drag_widget = nil
+    --[[
+    win.FLAG_EXIT = false
+    win.focused_widget = nil
+    win.clicked_widget = nil
+    win.focusing_widget = win -- default win
+    win.prev_drag_widget = nil
+    ]]--
 
-    while not FLAG_EXIT do
+    while not win.FLAG_EXIT do
         local event, e1, e2, e3 = os.pullEvent()
+
+        handlewindowevent(win, event,e1,e2,e3)
         
-        if event == 'mouse_click' then
-            clicked_widget, clicked_focusable_widget = getwinposwidget(win, e2, e3)
-            prev_drag_widget = clicked_widget
-            -- update focusing widget
-            if clicked_focusable_widget~=nil then
-                focusing_widget = clicked_focusable_widget
-            else
-                focusing_widget = win
-            end
-            
-        
-        elseif event == 'mouse_up' then
-            clicked_widget, clicked_focusable_widget = getwinposwidget(win, e2, e3)
-
-            -- signal
-            if clicked_widget ~= nil then
-                nilcall(clicked_widget.OnMouseUp, event,e1,e2,e3)
-            end 
-            clicked_widget=nil
-        
-        elseif event == 'mouse_drag' then
-            dragged_widget, dragged_focusable_widget = getwinposwidget(win, e2, e3)
-            if dragged_widget~=prev_drag_widget then
-                if prev_drag_widget ~= nil then
-                    -- drag out
-                    nilcall(prev_drag_widget.OnDragOut, event,e1,e2,e3)
-                end
-                if dragged_widget ~= nil then
-                    -- drag in
-                    nilcall(dragged_widget.OnDragIn, event,e1,e2,e3)
-                end
-            end
-            prev_drag_widget = dragged_widget
-        elseif event == 'key' then
-            nilcall(focusing_widget.OnKey, event,e1,e2,e3)
-        elseif event == 'key_up' then
-            nilcall(focusing_widget.OnKeyUp, event,e1,e2,e3)
-        elseif event == 'char' then
-            nilcall(focusing_widget.OnChar, event,e1,e2,e3)
-        elseif event == 'paste' then
-            nilcall(focusing_widget.OnPaste, event,e1,e2,e3)
-        elseif event == 'mouse_scroll' then
-            nilcall(focusing_widget.OnMouseScroll, event,e1,e2,e3)
-        end
-        -- BroadCast Signal
-        local i, func, todo_event
-        todo_event={function()return 0 end}
-        if win.eventDelegate[event] ~= nil then
-            for i, func in pairs(win.eventDelegate[event]) do
-                --nilcall(func, event,e1,e2,e3)
-                table.insert(todo_event, function() func(event,e1,e2,e3) end)
-            end
-        end
-        if win.eventDelegate['all'] ~= nil then
-            for i, func in pairs(win.eventDelegate['all']) do
-                --nilcall(func, event,e1,e2,e3)
-                table.insert(todo_event, function() func(event,e1,e2,e3) end)
-            end
-        end
-
-        if event == 'timer' then
-            -- e1 is timer_id
-            if win.timer[e1] ~= nil then
-                local keep_timer = win.timer[e1](event,e1)
-                if keep_timer then
-                    local new_timer_id = os.startTimer(1)
-                    local tmp_funct = win.timer[e1]
-                    win.timer[new_timer_id] = tmp_funct
-                end
-                if e1 ~= new_timer_id then
-                    win.timer[e1]=nil
-                end
-            end
-        end
-
-        -- Handle win.
-        -- {t=period, funct=funct}
-        -- get a timer and connect the function
-        if win.timer_queue ~= nil then
-            for i,tobj in pairs(win.timer_queue) do
-                local timer_id = os.startTimer(tobj.t)
-                win.timer[timer_id] = tobj.funct
-            end
-            -- clear queue
-            win.timer_queue={}
-        end
-
-        --parallel.waitForAny(unpack(todo_event))
-        for i, ev in pairs(todo_event) do
-            ev()
-        end
-
-        -- Recursive Part
-        --if win.child ~= nil then
-        --    for i,child in pairs(win.child) do
-        --        handlewindowevent(child, event,e1,e2,e3)
-        --    end
-        --end
-
+        -- FOR_DEBUGGING
         if event=='key_up' and e1==keys.tab then
-            FLAG_EXIT=true
+            win.FLAG_EXIT=true
             --term.clear()
             --term.setCursorPos(1,1)
         end
 
         -- Render --
+        --if not win.FLAG_EXIT then
         term.clear()
         renderwidget(win)
-
+        --end
     end
+    
+    if win.OnClose~=nil then win.OnClose() end
 end
 
 function new_window(x,y,widget,parent,w,h)
     local win={}
+    win.is_window=true
     if x==nil then x=1 end
     if y==nil then y=1 end
     if widget==nil then widget={} end
     if parent==nil then parent=term.current() end
-    twidth, theight=term.getSize()
+    local twidth, theight=term.getSize()
     if w==nil then w=twidth end
     if h==nil then h=theight end
 
@@ -343,6 +263,15 @@ function new_window(x,y,widget,parent,w,h)
     win.window = window.create(parent, win.x, win.y, w, h)
     win.eventDelegate = {} -- a event-function table called by mainloop
     win.timer = {}
+
+    -- event system related
+    win.FLAG_EXIT=false
+    win.clicked_widget, win.clicked_focusable_widget=nil,nil
+    win.focused_widget = nil
+    win.clicked_widget = nil
+    win.focusing_widget = win -- default win
+    win.prev_drag_widget = nil 
+
     return win
 end
 
@@ -453,24 +382,24 @@ function stopwindow(win)
             os.cancelTimer(i)
         end
     end
-    term.clear()
-    term.setCursorPos(1,1)
+    win.window.setVisible(false)
+
 end
 
 function new_win1()
     -- original mainloop can only deal with single win event
     -- maybe add recursive to handle multi-win and make os possible.
-
+    local win = new_window(1,1)
     local lab1 = {x=2,y=2,w=20, h=20,name='label1', text='im label1', bc=colors.white}
     local lab1c1 = {x=2,y=2,w=10,h=10,name='child1', text='btn'}
-    local event_label = {x=10,y=10,w=20,h=1, name='event display', text='Waiting', bc=colors.lightBlue}
-    local clicked_display = {x=10,y=12,w=20,h=1, name='clicked display', text='Waiting', bc=colors.lightBlue}
+    local event_label = {x=2,y=10,w=20,h=1, name='event display', text='Waiting', bc=colors.lightBlue}
+    local clicked_display = {x=2,y=12,w=20,h=1, name='clicked display', text='Waiting', bc=colors.lightBlue}
     local date_label = {x=1,y=1,w=20,h=1, name='date_label', text=os.date(), bc=colors.white, tc=colors.black}
 
     local exit_btn = {x=1,y=1,w=5,h=1,name='exit btn', text='exit', bc=colors.red, tc=colors.white}
-    exit_btn.OnMouseClick = function(e,e1,e2,e3) FLAG_EXIT=true end
+    exit_btn.OnMouseClick = function(e,e1,e2,e3) win.FLAG_EXIT=true exit_btn.bc=colors.pink end
 
-    local win = new_window(1,1)
+    
     win.bc=colors.lightGray
     addwidget(win, lab1)
     addwidget(lab1, lab1c1)
@@ -488,7 +417,17 @@ function new_win1()
     --mainloop(win)
     --stopwindow(win)
     --parallel.waitForAll(function() mainloop(win)end, function() ttime(lab1c1)end)
+    win.OnClose=function()stopwindow(win)end
     return win
+end
+
+function basic_window()
+    -- top bar
+    local win=new_window(1,1)
+    win.bc=colors.white
+    local title_bar={x=1,y=1,w=win.w, h=1, name='title_bar', text='title', bc=colors.gray}
+    local exit_btn={x=1,y=1,w=5,h=1, name='exit_btn', text='exit',bc=colors.red}
+
 end
 
 function test()
@@ -496,12 +435,13 @@ function test()
     local win2 = new_win1()
     win2.w=20
     win2.h=20
-    win2.x,win2.y=5,5
+    win2.x,win2.y=20,5
     win2.bc=colors.orange
     addwidget(win1, win2)
     mainloop(win1)
-    stopwindow(win1)
+    --stopwindow(win1)
 end
 
 test()
-
+term.clear()
+term.setCursorPos(1,1)
