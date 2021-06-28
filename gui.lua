@@ -85,7 +85,7 @@ function renderwidget(widget)
         else
             widget.window.setBackgroundColor(widget.bc)
         end
-        widget.window.setTextColor(widget.tc or colors.green)
+        widget.window.setTextColor(widget.tc or colors.black)
         widget.window.clear()
         widget.window.redraw()
         widget.window.setCursorPos(1,1)
@@ -291,6 +291,7 @@ function new_widget(x,y,w,h)
         x=x,y=y,w=w,h=h,
         window=window.create(term.current(),x,y,w,h)
     }
+    return widget
 end
 
 function addwidget(parent, widget, align)
@@ -442,6 +443,29 @@ function basic_window(x,y,w,h)
     return win
 end
 
+function new_listbox(x,y,w,h, ltable)
+    local widget=new_widget(x,y,w,h)
+    local i,ele
+    local ele_tab={}
+    for i,ele_name in pairs(ltable) do
+        ele_tab[i]=new_widget(x,y+i-1,w-2,1)
+        ele_tab[i].bc=widget.element_bc or colors.white
+        addwidget(widget, ele_tab[i])
+        ele_tab[i].text=ele_name
+        ele_tab[i].OnMouseClick=function(e,e1,e2,e3)
+            if widget.selected_element~=ele_tab[i] and 
+               widget.selected_element~=nil then
+                -- clear the clicked effect
+                widget.selected_element.bc=widget.element_bc or colors.white
+            end
+            widget.selected_element=ele_tab[i]
+            widget.selected_index=i
+            ele_tab[i].bc=widget.element_selected_bc or colors.gray
+        end
+    end
+    return widget
+end
+
 function test()
     local win1 = new_win1()
     local win2 = basic_window(20,5,20,20)
@@ -460,6 +484,8 @@ gui = {
     addtimer,
     mainloop=mainloop,
 
-    basic_window=basic_window
-
+    basic_window=basic_window,
+    new_listbox=new_listbox
 }
+
+return gui
