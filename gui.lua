@@ -99,6 +99,11 @@ function renderwidget(widget)
 end
 
 function handlewindowevent(win, event,e1,e2,e3)
+    if win.FLAG_EXIT then
+        nilcall(win.OnClose)
+        win.window.setVisible(false)
+    end
+
     -- handle the event to a window and its subwindows
     if event == 'mouse_click' then
         win.clicked_widget, win.clicked_focusable_widget = getwinposwidget(win, e2, e3)
@@ -243,7 +248,7 @@ function mainloop(win)
     if win.OnClose~=nil then win.OnClose() end
 end
 
-function new_window(x,y,widget,parent,w,h)
+function new_window(x,y,w,h,widget,parent)
     local win={}
     win.is_window=true
     if x==nil then x=1 end
@@ -421,27 +426,40 @@ function new_win1()
     return win
 end
 
-function basic_window()
+function basic_window(x,y,w,h)
     -- top bar
-    local win=new_window(1,1)
+    local win=new_window(x,y,w,h)
     win.bc=colors.white
     local title_bar={x=1,y=1,w=win.w, h=1, name='title_bar', text='title', bc=colors.gray}
-    local exit_btn={x=1,y=1,w=5,h=1, name='exit_btn', text='exit',bc=colors.red}
+    local exit_btn={x=1,y=1,w=5,h=1, name='exit_btn', text='exit',bc=colors.red, tc=colors.white}
+    exit_btn.OnMouseClick=function(e,e1,e2,e3)win.FLAG_EXIT=true exit_btn.bc=colors.yellow end
 
+    addwidget(win, title_bar)
+    addwidget(title_bar, exit_btn, 'ne')
+    
+
+    win.OnClose=function()stopwindow(win)end
+    return win
 end
 
 function test()
     local win1 = new_win1()
-    local win2 = new_win1()
-    win2.w=20
-    win2.h=20
-    win2.x,win2.y=20,5
-    win2.bc=colors.orange
+    local win2 = basic_window(20,5,20,20)
+
+
     addwidget(win1, win2)
     mainloop(win1)
     --stopwindow(win1)
 end
 
-test()
-term.clear()
-term.setCursorPos(1,1)
+gui = {
+    new_window=new_window,
+    new_widget=new_widget,
+    addwidget=addwidget,
+    bind=bind,
+    addtimer,
+    mainloop=mainloop,
+
+    basic_window=basic_window
+
+}
