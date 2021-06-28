@@ -453,17 +453,67 @@ function new_listbox(x,y,w,h, ltable)
         addwidget(widget, ele_tab[i])
         ele_tab[i].text=ele_name
         ele_tab[i].OnMouseClick=function(e,e1,e2,e3)
-            if widget.selected_element~=ele_tab[i] and 
-               widget.selected_element~=nil then
-                -- clear the clicked effect
-                widget.selected_element.bc=widget.element_bc or colors.white
+            if widget.selected_element~=ele_tab[i] then
+                if widget.selected_element~=nil then
+                    -- clear the clicked effect
+                    widget.selected_element.bc=widget.element_bc or colors.white
+                end
+                -- update selected element
+                widget.selected_element=ele_tab[i]
+                widget.selected_index=i
+                ele_tab[i].bc=widget.element_selected_bc or colors.lightGray
+                -- signal when click element
+                nilcall(ele_tab[i].OnElementSelected)
             end
-            widget.selected_element=ele_tab[i]
-            widget.selected_index=i
-            ele_tab[i].bc=widget.element_selected_bc or colors.gray
         end
     end
     return widget
+end
+
+function new_button(x,y,w,h, toggle_mode)
+    -- set function outside
+    -- this just provide button effect according to toggle_mode
+    -- if want to bind button, 
+    -- use OnClick and OnUp instead of OnMouseClick,OnMouseUp
+    local btn=new_widget(x,y,w,h)
+    btn.toggle=false
+    btn.bc = colors.lightGray
+    btn.normal_bc=colors.lightGray
+    btn.clicked_bc=colors.grey
+    btn.OnMouseClick=function(e,e1,e2,e3)
+        if toggle_mode then
+            if btn.toggle then
+                btn.bc=btn.normal_bc
+                btn.toggle=false
+            else
+                btn.bc=btn.clicked_bc
+                btn.toggle=true
+                nilcall(btn.OnClick,e,e1,e2,e3)
+            end
+        else
+            btn.bc=btn.clicked_bc
+            nilcall(btn.OnClick,e,e1,e2,e3)
+        end
+    end
+    btn.OnMouseUp=function(e,e1,e2,e3)
+        if toggle_mode then
+
+        else
+            btn.bc=normal_bc
+            nilcall(btn.OnUp,e,e1,e2,e3)
+        end
+    end
+    btn.OnDragIn=function(e,e1,e2,e3)
+        if not toggle_mode then
+            btn.bc=btn.clicked_bc
+        end
+    end
+    btn.OnDragOut=function(e,e1,e2,e3)
+        if not toggle_mode then
+            btn.bc=btn.normal_bc
+        end
+    end
+    return btn
 end
 
 function test()
@@ -485,7 +535,8 @@ gui = {
     mainloop=mainloop,
 
     basic_window=basic_window,
-    new_listbox=new_listbox
+    new_listbox=new_listbox,
+    new_button=new_button
 }
 
 return gui
