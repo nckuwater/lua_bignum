@@ -477,11 +477,12 @@ function new_button(x,y,w,h, toggle_mode)
     -- use OnClick and OnUp instead of OnMouseClick,OnMouseUp
     local btn=new_widget(x,y,w,h)
     btn.toggle=false
+    btn.toggle_mode=toggle_mode or false
     btn.bc = colors.lightGray
     btn.normal_bc=colors.lightGray
-    btn.clicked_bc=colors.grey
+    btn.clicked_bc=colors.gray
     btn.OnMouseClick=function(e,e1,e2,e3)
-        if toggle_mode then
+        if btn.toggle_mode then
             if btn.toggle then
                 btn.bc=btn.normal_bc
                 btn.toggle=false
@@ -496,20 +497,20 @@ function new_button(x,y,w,h, toggle_mode)
         end
     end
     btn.OnMouseUp=function(e,e1,e2,e3)
-        if toggle_mode then
+        if btn.toggle_mode then
 
         else
-            btn.bc=normal_bc
+            btn.bc=btn.normal_bc
             nilcall(btn.OnUp,e,e1,e2,e3)
         end
     end
     btn.OnDragIn=function(e,e1,e2,e3)
-        if not toggle_mode then
+        if not btn.toggle_mode then
             btn.bc=btn.clicked_bc
         end
     end
     btn.OnDragOut=function(e,e1,e2,e3)
-        if not toggle_mode then
+        if not btn.toggle_mode then
             btn.bc=btn.normal_bc
         end
     end
