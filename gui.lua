@@ -470,51 +470,56 @@ function new_listbox(x,y,w,h, ltable)
     return widget
 end
 
-function new_button(x,y,w,h, toggle_mode)
+function new_button(x,y,w,h)
     -- set function outside
     -- this just provide button effect according to toggle_mode
     -- if want to bind button, 
     -- use OnClick and OnUp instead of OnMouseClick,OnMouseUp
     local btn=new_widget(x,y,w,h)
-    btn.toggle=false
-    btn.toggle_mode=toggle_mode or false
     btn.bc = colors.lightGray
     btn.normal_bc=colors.lightGray
     btn.clicked_bc=colors.gray
     btn.OnMouseClick=function(e,e1,e2,e3)
-        if btn.toggle_mode then
-            if btn.toggle then
-                btn.bc=btn.normal_bc
-                btn.toggle=false
-            else
-                btn.bc=btn.clicked_bc
-                btn.toggle=true
-                nilcall(btn.OnClick,e,e1,e2,e3)
-            end
-        else
-            btn.bc=btn.clicked_bc
-            nilcall(btn.OnClick,e,e1,e2,e3)
-        end
+        btn.bc=btn.clicked_bc
+        nilcall(btn.OnClick,e,e1,e2,e3)
     end
     btn.OnMouseUp=function(e,e1,e2,e3)
-        if btn.toggle_mode then
-
-        else
-            btn.bc=btn.normal_bc
-            nilcall(btn.OnUp,e,e1,e2,e3)
-        end
+        btn.bc=btn.normal_bc
+        nilcall(btn.OnUp,e,e1,e2,e3)
     end
     btn.OnDragIn=function(e,e1,e2,e3)
-        if not btn.toggle_mode then
-            btn.bc=btn.clicked_bc
-        end
+        btn.bc=btn.clicked_bc
     end
     btn.OnDragOut=function(e,e1,e2,e3)
-        if not btn.toggle_mode then
-            btn.bc=btn.normal_bc
-        end
+        btn.bc=btn.normal_bc
+
     end
     return btn
+end
+
+function new_dropdown(win, elements, visible)
+    local widget=new_widget()
+    elements=elements or {}
+    widget.window.setVisible(visible or false)
+    widget.show=function(x,y)
+        widget.x=x or 1
+        widget.y=y or 1
+        widget.window.setVisible(true)
+    end
+    widget.hide=function()
+        widget.window.setVisible(false)
+    end
+    bind(win, 'mouse_click', widget.hide)
+    local i, ele, elements, tmp, iy
+
+    widget.elements=elements
+    iy=1
+    for i, ele in pairs(elements) do
+        add_widget(widget,ele)
+        ele.x=1
+        ele.y=iy
+        iy=iy+ele.h
+    end
 end
 
 function test()
