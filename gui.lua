@@ -74,6 +74,9 @@ function getwinposwidget(win, x, y)
             if focus_res ~= nil then break end
         end
     end
+    if res==nil and containpos(win, x,y) then
+        res=win
+    end
     return res, focus_res
 end
 
@@ -497,35 +500,83 @@ function new_button(x,y,w,h)
     return btn
 end
 
-function new_dropdown(win, elements, visible)
+function new_label(text)
+    local label=new_widget()
+    label.w=string.len(text)
+    label.text=text
+    label.bc=colors.white
+    label.tc=colors.black
+    return label
+end
+
+function is_subchild(widget, obj)
+    if widget==nil then return false end
+    if obj==widget then
+        return true
+    end
+    local res,i,ele
+    if widget.child~=nil then
+        for i,ele in pairs(widget.child) do
+            res=is_subchild(ele,obj)
+            if res then return true end
+        end
+    end
+    return false
+end
+
+function new_dropdown(win, elements)
     local widget=new_widget()
-    elements=elements or {}
+    addwidget(win, widget)
+    if elements==nil then
+        elements={}
+    end
     widget.window.setVisible(visible or false)
     widget.show=function(x,y)
-        widget.x=x or 1
-        widget.y=y or 1
+        widget.x=x or widget.x
+        widget.y=y or widget.y
         widget.window.setVisible(true)
+        widget.window.reposition(widget.x, widget.y)
     end
     widget.hide=function()
         widget.window.setVisible(false)
     end
-    bind(win, 'mouse_click', widget.hide)
-    local i, ele, elements, tmp, iy
 
+    widget.just_clicked_flag=false
+    bind(win, 'mouse_click', widget, 
+         function(w,e,e1,e2,e3)
+            if not is_subchild(widget,win.clicked_widget) then
+                if widget.window.isVisible() and not widget.just_clicked_flag then
+                    -- means that this event is the same as the init open event,
+                    -- need to cancel this one to prevent hide right after show.
+                    widget.just_clicked_flag=true
+                else
+                    widget.hide() 
+                    widget.just_clicked_flag=false
+                end
+            end 
+        end)
+
+    local i, ele, iy, max_w
     widget.elements=elements
     iy=1
+    max_w=0
     for i, ele in pairs(elements) do
-        add_widget(widget,ele)
+        addwidget(widget,ele)
         ele.x=1
         ele.y=iy
+        ele.window.reposition(ele.x, ele.y)
         iy=iy+ele.h
+        if ele.w~=nil and max_w < ele.w then max_w=ele.w end
     end
+    widget.h=iy-1
+    widget.w=max_w
+    widget.window.reposition(1,1,widget.w,widget.h)
+    return widget
 end
 
 function test()
     local win1 = new_win1()
     local win2 = basic_window(20,5,20,20)
-
 
     addwidget(win1, win2)
     mainloop(win1)
@@ -542,7 +593,9 @@ gui = {
 
     basic_window=basic_window,
     new_listbox=new_listbox,
-    new_button=new_button
+    new_button=new_button,
+    new_label=new_label,
+    new_dropdown=new_dropdown
 }
 
 return gui
