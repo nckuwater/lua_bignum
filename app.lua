@@ -21,6 +21,13 @@ function test()
     lab1.bc=colors.lightGray
     lab2.bc=colors.lightGray
 
+    local img=paintutils.loadImage('img.img')
+    local lmg=gui.new_image(img)
+    lmg.x=30
+    lmg.y=5
+    gui.resize(lmg, 20,20)
+    gui.addwidget(win,lmg)
+
     win.OnMouseClick=function(e,e1,e2,e3) 
         if mo~=nil then
             mo.write('clicked\n')
@@ -40,11 +47,15 @@ end
 
 local ok,err = pcall(test)
 term.setCursorPos(1,1)
-term.setTextColor(colors.red)
+term.setBackgroundColor(colors.black)
 term.clear()
-print(ok)
-print(err)
-fp=fs.open('crash_log.log','w')
-fp.write(err)
-fp.close()
+if not ok then
+    fp=fs.open('crash_log.log','w')
+    fp.write(err)
+    fp.close()
+    term.setTextColor(colors.red)
+    print(err)
+end
+term.setTextColor(colors.white)
+
 

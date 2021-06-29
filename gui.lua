@@ -19,65 +19,86 @@ function nilcall(f, ...)
     end
 end
 
-function getposwidget(widget, x, y)
+function getabspos(widget)
+    local parent=widget.parent
+    local ox,oy=widget.x,widget.y
+    while parent ~= nil do
+        ox=ox+parent.x-1
+        oy=oy+parent.y-1
+        parent=parent.parent
+    end
+    return ox,oy
+end
+
+function getposwidget(widget, x, y, is_dif_win)
     -- this x, y is base on parent coordinate
     -- first, check if child is valid
     local i,w,res
+    -- check if traverse window.
+    is_dif_win = is_dif_win or false
+    if widget.is_window then is_dif_win = true end
+
     if widget.child ~= nil then
         for i,child in pairs(widget.child) do
-            res = getposwidget(child, x-widget.x+1, y-widget.y+1)
+            res, is_dif_win = getposwidget(child, x-widget.x+1, y-widget.y+1, is_dif_win)
             if res ~= nil then
                 -- child or its child is the target
-                return res
+                return res, is_dif_win
             end
         end
     end
     -- second, if no child valid, check self
     if containpos(widget, x, y) then
-        return widget
+        return widget, is_dif_win
     end
-    return nil
+    return nil, is_dif_win
 end
 
 function getposfocusablewidget(widget, x, y)
     -- this is try to find the lowest clicked focusable widget
     -- this x, y is base on parent coordinate
     -- first, check if child is valid
-    local i,w,res
+    local i,w,res, is_dif_win
+
     if widget.child ~= nil then
         for i,child in pairs(widget.child) do
-            res = getposwidget(child, x-widget.x+1, y-widget.y+1)
+            res,is_dif_win = getposwidget(child, x-widget.x+1, y-widget.y+1)
             if res ~= nil and res.focusable==true then
                 -- child or its child is the target
-                return res
+                return res,is_dif_win
             end
         end
     end
     -- second, if no child valid, check self
     if containpos(widget, x, y) and widget.focusable==true then
-        return widget
+        if widget.is_window then 
+            return widget, true
+        else
+            return widget, false
+        end
     end
-    return nil
+    return nil, false
 end
 
 function getwinposwidget(win, x, y) 
     local res, focus_res=nil,nil
+    local is_dif_win, is_dif_win_focus
     x = x-win.x+1
     y = y-win.y+1
     if win.child~=nil then
         for i,w in pairs(win.child) do
-            res = getposwidget(w, x, y)
+            res,is_dif_win = getposwidget(w, x, y)
             if res ~= nil then break end
         end
         for i,w in pairs(win.child) do
-            focus_res = getposfocusablewidget(w, x, y)
+            focus_res,is_dif_win_focus = getposfocusablewidget(w, x, y)
             if focus_res ~= nil then break end
         end
     end
     if res==nil and containpos(win, x,y) then
         res=win
     end
-    return res, focus_res
+    return res, focus_res, is_dif_win, is_dif_win_focus
 end
 
 function renderwidget(widget)
@@ -93,6 +114,10 @@ function renderwidget(widget)
         widget.window.redraw()
         widget.window.setCursorPos(1,1)
         if widget.text~=nil then widget.window.write(widget.text) end
+        if widget.img~=nil then 
+            local absx, absy=getabspos(widget)
+            paintutils.drawImage(widget.img, absx, absy)
+        end
     end
     if widget.child ~= nil then
         for i,child in pairs(widget.child) do
@@ -509,6 +534,18 @@ function new_label(text)
     return label
 end
 
+function resize(widget,w,h)
+    widget.w=w or widget.w
+    widget.h=h or widget.h
+    widget.window.reposition(widget.x,widget.y,widget.w,widget.h)
+end
+
+function new_image(img)
+    local widget=new_widget()
+    widget.img=img
+    return widget
+end
+
 function is_subchild(widget, obj)
     if widget==nil then return false end
     if obj==widget then
@@ -590,12 +627,14 @@ gui = {
     bind=bind,
     addtimer,
     mainloop=mainloop,
+    resize=resize,
 
     basic_window=basic_window,
     new_listbox=new_listbox,
     new_button=new_button,
     new_label=new_label,
-    new_dropdown=new_dropdown
+    new_dropdown=new_dropdown,
+    new_image=new_image
 }
 
 return gui

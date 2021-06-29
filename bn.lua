@@ -374,9 +374,15 @@ function bn_div_fixed_top(dv, rm, num, divisor)
     bn_expand(tmp, div_n+1) -- q*div
     loop = loop+1
     local inum, idiv=snum.top, sdiv.top
+    local l0
     for i=0,loop do
         q = math.ceil(snum[inum] / sdiv[idiv])
+        l0=bn_mul_words(tmp.d, sdiv.d, div_n, q)
+        tmp.d[div_n+1]=l0 -- add the carry black
+
         
+
+
     end
 
 

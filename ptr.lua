@@ -8,28 +8,59 @@ function ptr_index(ptr, n)
     end
 end
 
+function ptr_newindex(tab, key, value)
+    if tab.d==nil then return nil end
+    tab.d[key+tab.index] = value
+end
+
 function ptr_add(ptr, n)
-    ptr.index = ptr.index+n
+    local nptr=new_ptr(ptr.d)
+    nptr.index = ptr.index+n
+    return nptr
+end
+
+function ptr_sub(ptr, n)
+    local nptr=new_ptr(ptr.d)
+    nptr.index=ptr.index-n
+    return nptr 
+end
+
+function ptr_eq(t1,t2)
+    if t1.d==t2.d and t1.index==t2.index then
+        return true
+    end
+    return false
+end
+
+function new_ptr(tab)
+    local ptr
+    if tab==nil then
+        ptr={d={}, index=1}
+    elseif tab.index~=nil then
+        ptr={d=tab.d, index=tab.index}
+    else
+        ptr={d=tab, index=1}
+    end
+    setmetatable(ptr, {
+        __index=ptr_index, 
+        __newindex=ptr_newindex,
+        __add=ptr_add,
+        __sub=ptr_sub,
+        __eq=ptr_eq})
     return ptr
 end
 
-function new_ptr(t)
-    local ptr = {d=t, index=0}
-    setmetatable(ptr, {__index=ptr_index, __add=ptr_add})
-    return ptr
-end
-
-function main()
+function test()
     local tab = {1,2,3}
     local ptr = new_ptr(tab)
-    print(getmetatable(t))
-    print(ptr[1])
+    
+    local ptr2= new_ptr(ptr)
     ptr = ptr+1
-    print(ptr[1])
+    ptr[0]=100
+    print(ptr2[1])
+    
 end
 
-local test={}
-function test.hello()
-    print('hello')
-end
-hello()
+
+
+return {new_ptr=new_ptr}
