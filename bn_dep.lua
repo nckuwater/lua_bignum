@@ -1,10 +1,9 @@
-ptr=require('ptr')
 BN_MASK2 = 0xffff
 BN_BITS2 = 16
 
 function new_bn()
     local bn = {
-        d = new_ptr(),
+        d = {},
         top = 0,
         dmax = 0,
         neg = 0
@@ -14,7 +13,7 @@ end
 
 function bn_copy(a, b)
     bn_expand(a, b)
-    for i=0, b.top-1 do
+    for i=1, b.top do
         a.d[i] = b.d[i]
     end
     a.neg = b.neg
@@ -32,7 +31,7 @@ function hex2bn(hex)
     
     local blocks = math.floor(len*4 / BN_BITS2)
     local head = (len*4 % BN_BITS2) / 4
-    local k,ir = -1,0
+    local k,ir = 0,1
     local bsize = BN_BITS2 / 4 -- 1 hex = 4bit, # of hex in a block
     local bstr
     --print('bsize'..bsize..' len'..len)
@@ -46,7 +45,7 @@ function hex2bn(hex)
             --print('bstr'..bstr)
             bn.d[ir] = tonumber(bstr, 16)
             ir=ir+1
-            k = -1
+            k = 0
         end
         i = i-1
     end
@@ -63,12 +62,12 @@ function bn2hex(bn)
     if bn.neg == 1 then
         hex = hex .. '-'
     end
-    local i = bn.top-1
-    while i>=0 do
+    local i = bn.top
+    while i>0 do
         --hex = hex..string.format("%x", bn.d[i])
         hex = hex..string.format('%04x',bn.d[i])
         i = i-1
-        if i>=0 then
+        if i>0 then
             hex=hex.." "
         end
     end
@@ -79,7 +78,7 @@ function bn_expand(bn, w)
     if(bn.dmax >= w) then
         return bn
     end
-    for i = bn.top, w-1 do
+    for i = (bn.top+1), w do
         -- append at higher index
         table.insert(bn.d, 0)
     end
@@ -89,7 +88,7 @@ function bn_expand(bn, w)
 end
 
 function bn_check_top(bn)
-    local i=bn.top-1
+    local i=bn.top
     while bn.d[i] == 0 do
         bn.top = bn.top-1
         i=i-1
@@ -97,35 +96,31 @@ function bn_check_top(bn)
     return bn
 end
 
-function bn_add_words(r, a, b, n)
-    -- r, a, b are ptr
-    a=new_ptr(a)
-    b=new_ptr(b)
-    r=new_ptr(r)
+function bn_add_words(r, ir, a, ia, b, ib, n)
+    -- r is pre allocated table
+    --local ll,ia,ib,ir = 0, 1, 1, 1
     local ll=0
     while n ~= 0 do
-        ll = ll + (a[0] + b[0])
-        r[0] = bit.band(ll, BN_MASK2)
+        ll = ll + (a[ia] + b[ib])
+        r[ir] = bit.band(ll, BN_MASK2)
         ll = bit.blogic_rshift(ll, BN_BITS2)
-        a=a+1
-        b=b+1
-        r=r+1
+        ia = ia + 1
+        ib = ib + 1
+        ir = ir + 1
         n = n - 1
     end
     return ll
 end
 
-function bn_sub_words(r, a, b, n)
-    -- a,b,r are ptr
-    a=new_ptr(a)
-    b=new_ptr(b)
-    r=new_ptr(r)
+function bn_sub_words(r, ir, a, ia, b, ib, n)
+    -- r is pre allocated table
+    --local ia,ib,ir = 1, 1, 1
     local t1, t2
     local c = 0
     while n ~= 0 do
-        t1 = a[0]
-        t2 = b[0]
-        r[0] = bit.band(t1 - t2 - c, BN_MASK2)
+        t1 = a[ia]
+        t2 = b[ib]
+        r[ir] = bit.band(t1 - t2 - c, BN_MASK2)
         if t1 ~= t2 then
             if t1 < t2 then
                 c = 1
@@ -133,9 +128,9 @@ function bn_sub_words(r, a, b, n)
                 c = 0
             end
         end
-        a = a + 1
-        b = b + 1
-        r = r + 1
+        ia = ia + 1
+        ib = ib + 1
+        ir = ir + 1
         n = n - 1
     end
     return c
@@ -145,7 +140,7 @@ function bn_uadd(r, a, b)
     local max, min, dif
     local ap, bp
     local rp, carry, t1, t2
-
+    local ia, ib, ir
     if(a.top < b.top)then
         local tmp = a
         a = b
@@ -157,24 +152,23 @@ function bn_uadd(r, a, b)
     bn_expand(r, max+1)
 
     r.top = max
-    ap = new_ptr(a.d)
-    bp = new_ptr(b.d)
-    rp = new_ptr(r.d)
+    ap = a.d
+    bp = b.d
+    rp = r.d
 
-    carry = bn_add_words(rp, ap, bp, min)
-    rp=rp+min
-    ap=ap+min
+    carry = bn_add_words(rp, 1, ap, 1, bp, 1, min)
+    ir = min + 1
+    ia = min + 1
 
     while(dif ~= 0)do
         dif = dif-1
-        t1 = ap[0]
-        ap=ap+1
+        t1 = ap[ia]
+        ia = ia + 1
         t2 = bit.band(t1+carry, BN_MASK2)
-        rp[0] = t2
-        rp=rp+1
+        rp[ir] = t2
         if t2 == 0 then carry = bit.band(carry, 1) else carry = bit.band(carry, 0) end
     end
-    rp[0] = carry
+    rp[ir] = carry
     r.top = r.top + carry
     r.neg = 0
 
@@ -185,6 +179,7 @@ function bn_usub(r, a, b)
     local max, min, dif
     local t1, t2, borrow, rp
     local ap, bp
+    local ia,ib,ir=1,1,1
 
     max = a.top
     min = b.top
@@ -200,36 +195,34 @@ function bn_usub(r, a, b)
         return 0
     end
 
-    ap = new_ptr(a.d)
-    bp = new_ptr(b.d)
-    rp = new_ptr(r.d)
+    ap = a.d
+    bp = b.d
+    rp = r.d
 
-    borrow = bn_sub_words(rp, ap, bp, min);
-    ap = ap + min
-    rp = rp + min
+    borrow = bn_sub_words(rp, 1, ap, 1, bp, 1, min);
+    ia = ia+min;
+    ib = ib+min;
 
     -- borrow process (borrow 1 from left number)
     while (dif ~= 0) do
         dif = dif - 1
         --t1 = *(ap++)
-        t1 = ap[0]
-        ap=ap+1
+        t1 = ap[ia]
+        ia = ia+1
         --t2 = (t1 - borrow) & BN_MASK2
         t2 = bit.band((t1 - borrow), BN_MASK2)
         --*(rp++) = t2;
-        rp[0] = t2
-        rp=rp+1
+        rp[ir] = t2
         ir = ir+1
         --borrow &= (t1 == 0) -- borrow from the next number, if the number != 0 it can handle it, then borrow stop.
         if t1 == 0 then borrow = bit.band(borrow, 1) else borrow = bit.band(borrow, 0) end
     end
 
-    rp=rp-1
-    while (max and (rp[0] == 0)) do--// correct the new top
+    ir = ir-1
+    while (max and (rp[ir] == 0)) do--// correct the new top
+        ir = ir-1
         max = max-1
-        rp=rp-1
     end
-    rp=rp+1
     r.top = max;
     r.neg = 0;
 
@@ -237,18 +230,14 @@ function bn_usub(r, a, b)
 end
 
 function bn_ucmp(a, b)
-    local i
-    local t1,t2,ap,bp
-
-    i=a.top-b.top
+    local i = a.top - b.top
     if i~=0 then
         return i
     end
-
-    ap=new_ptr(ap)
-    bp=new_ptr(bp)
-    i = a.top-1
-    while i>=0 do
+    local ap,bp=a.d,b.d
+    local t1,t2
+    i = a.top
+    while i>=1 do
         t1=ap[i]
         t2=bp[i]
         if t1 ~= t2 then
@@ -288,7 +277,6 @@ function bn_add(r, a, b)
     r.neg = r_neg
     return ret
 end
-
 
 function bn_mul_words(rp, ap, num, w)
     -- rp is pre-expanded
@@ -391,6 +379,9 @@ function bn_div_fixed_top(dv, rm, num, divisor)
         q = math.ceil(snum[inum] / sdiv[idiv])
         l0=bn_mul_words(tmp.d, sdiv.d, div_n, q)
         tmp.d[div_n+1]=l0 -- add the carry black
+
+        
+
 
     end
 
