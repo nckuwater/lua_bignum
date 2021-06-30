@@ -135,8 +135,8 @@ function bn_sub_words(r, a, b, n)
     while n ~= 0 do
         t1 = a[0]
         t2 = b[0]
-        --r[0] = bit.band(t1 - t2 - c, BN_MASK2)
-        r[0] = t1 - t2 - c
+        r[0] = bit.band(t1 - t2 - c, BN_MASK2)
+        --r[0] = t1 - t2 - c
         r=r+1
         if t1 ~= t2 then
             if t1 < t2 then
@@ -621,7 +621,14 @@ function bn_div_fixed_top(dv, rm, num, divisor)
         tmp.d[div_n]=l0 -- add the carry black
         wnum=wnum-1
 
+
+        print(bn2hex(snum))
+        print(bn2hex(tmp))
+
         l0=bn_sub_words(wnum,wnum,tmp.d, div_n+1)
+
+        print("after sub")
+        print(bn2hex(snum))
         q=q-l0
 
         --l0=0-l0
@@ -630,9 +637,10 @@ function bn_div_fixed_top(dv, rm, num, divisor)
         for j=0,div_n-1 do
             tmp.d[j]=bit.band(sdiv.d[j], l0)
         end
+        print(bn2hex(tmp))
         l0=bn_add_words(wnum,wnum,tmp.d,div_n)
-        wnumtop[0]=wnumtop[0]+l0
-
+        wnumtop[0]=bit.band(wnumtop[0]+l0, BN_MASK2)
+        print(bn2hex(snum))
         if(wnumtop[0]~=0)then
             -- this number should be zero after this part of division
             -- otherwise something went wrong
@@ -702,6 +710,7 @@ function div_test()
     print(bn2hex(b))
     print("start div")
     bn_div(dv,rm,a,b)
+    print("result")
     print(textutils.serialiseJSON(dv))
     print(bn2hex(dv))
     print(textutils.serialiseJSON(rm))
