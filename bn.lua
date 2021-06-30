@@ -1,4 +1,5 @@
 ptr=require('ptr')
+_G.new_ptr=ptr.new_ptr
 BN_MASK2 = 0xffff
 BN_BITS2 = 16
 
@@ -289,38 +290,64 @@ function bn_add(r, a, b)
     return ret
 end
 
+function bn_sub(r, a, b)
+    local ret, r_neg, cmp_res
+    if(a.neg~=b.neg)then
+        r_neg=a.neg
+        ret=bn_add(r,a,b)
+    else
+        cmp_res=bn_ucmp(a,b)
+        if(cmp_res>0)then
+            r_neg=a.neg
+            ret=bn_usub(r,a,b)
+        elseif(cmp_res<0)then
+            if b.neg then r_neg=0 else r_neg=1 end
+            ret=bn_usub(r,b,a)
+        else
+            r_neg=0
+            bn_zero(r)
+            ret=1
+        end
+    end
+    r.neg=r_neg
+    return ret
+end
+
 
 function bn_mul_words(rp, ap, num, w)
     -- rp is pre-expanded
+    rp=new_ptr(rp)
+    ap=new_ptr(ap)
     local c1=0
-    local ir, ia=1,1
     while num ~= 0 do
-        c1 = c1 + ap[ia] * w
-        rp[ir] = bit.band(c1, BN_MASK2)
+        c1 = c1 + ap[0] * w
+        rp[0] = bit.band(c1, BN_MASK2)
         c1 = bit.blogic_rshift(c1, BN_BITS2)
-        ir=ir+1
-        ia=ia+1
+        rp=rp+1
+        ap=ap+1
         num=num-1
     end
     return c1
 end
 
-function bn_mul_add_words(rp, ir, ap, num ,w)
+function bn_mul_add_words(rp, ap, num ,w)
     -- rp is pre-expanded
+    rp=new_ptr(rp)
+    ap=new_ptr(ap)
     local c1=0
-    local ia=1
     while num ~= 0 do
-        c1 = c1 + rp[ir] + (ap[ia] * w)
-        rp[ir] = bit.band(c1, BN_MASK2)
+        c1 = c1 + rp[0] + (ap[0] * w)
+        rp[0] = bit.band(c1, BN_MASK2)
         c1 = bit.blogic_rshift(c1, BN_BITS2)
-        ir=ir+1
-        ia=ia+1
+        rp=rp+1
+        ap=ap+1
         num=num-1
     end
     return c1
 end
 
 function bn_mul_normal(r, a, na, b, nb)
+    local rr
     if na < nb then
         local itmp, ltmp
         itmp=na
@@ -330,23 +357,22 @@ function bn_mul_normal(r, a, na, b, nb)
         a=b
         b=ltmp
     end
-    local ir=1 -- irr is for carry
-    local ib=1
-    local irr=na+1
-    r[irr] = bn_mul_words(r, a, na, b[ib])
-    irr=irr+1
-    ir=ir+1
-    ib=ib+1
+    rr=new_ptr(r)
+    rr=rr+na --&(r[na])
+    rr[0] = bn_mul_words(r, a, na, b[0])
+    rr=rr+1
+    r=r+1
+    b=b+1
     while true do
         nb=nb-1
         if nb<=0 then
             break
         end
-        print('ib '..ib..' irr '..irr)
-        r[irr] = bn_mul_add_words(r, ir, a, na, b[ib])
-        irr=irr+1
-        ir=ir+1
-        ib=ib+1
+
+        rr[0] = bn_mul_add_words(r, a, na, b[0])
+        rr=rr+1
+        r=r+1
+        b=b+1
     end
 
 end
@@ -359,10 +385,11 @@ function bn_mul_fixed_top(r, a, b)
     if al==0 or bl==0 then
         return 1
     end
-    bn_expand(r, top)
-    r.top=top
-    bn_mul_normal(r.d, a.d, al, b.d, bl)
-    r.neg=bit.bxor(a.neg, b.neg)
+    local rr=r
+    bn_expand(rr, top)
+    rr.top=top
+    bn_mul_normal(rr.d, a.d, al, b.d, bl)
+    rr.neg=bit.bxor(a.neg, b.neg)
     return 1
 end
 
@@ -372,20 +399,88 @@ function bn_mul(r,a,b)
     return ret
 end
 
+function bn_num_bit_word(l)
+    local bits, keep, mask
+    mask=bit.blshift(1, BN_BITS2-1)
+    bits=0
+    keep=0
+    for i=1,BN_BITS2 do
+        if bit.band(l, mask)~=0 then
+            break
+        end
+        l=bit.blshift(l,1)
+        bits=bits+1
+    end
+    return bits
+end
+
+function bn_left_align(num)
+    local d,n,m,rmask
+    d=new_ptr(num.d)
+    local top=num.top
+    local rshift=bn_num_bit_word(d[top-1])
+    local lshift,i
+
+    lshift=BN_BITS2-rshift
+    rshift=rshift%BN_BITS2
+    if rshift==1 then rmask=BN_MASK2 else rmask=0 end
+    
+    m=0
+    for i=0, top-1 do
+        n=d[i]
+        d[i]=bit.band((bit.bor(bit.blshift(n, lshift), m), BN_MASK2)
+        m=bit.band(bit.blogic_rshift(n, rshift), rmask)
+    end
+    return lshift
+end
+
 function bn_div_fixed_top(dv, rm, num, divisor)
-    -- dv must be table not nil
+    -- all args are BIGNUM
     -- rm can be nil
     -- no change to num, divisor
-    local snum, sdiv = new_bn(), new_bn()
-    bn_copy(snum, num)
-    bn_copy(sdiv, div)
-    local div_n, num_n=sdiv.top, snum.top
-    local loop=num_n-div_n
-    local q
-    local tmp=new_bn()
-    bn_expand(tmp, div_n+1) -- q*div
-    loop = loop+1
-    local inum, idiv=snum.top, sdiv.top
+    
+    local norm_shift,i,j,loop
+    local tmp,snum,sdiv,res
+    local resp, wnum, wnumtop
+    local d0,d1
+    local num_n,div_n
+    if dv==nil then
+        res=bn_new()
+    else
+        res=dv
+    end
+    tmp=bn_new()
+    snum=bn_new()
+    sdiv=bn_new()
+
+    bn_copy(sdiv, divisor)
+    norm_shift=bn_left_align(sdiv)
+    sdiv.neg=0
+
+    bn_lshift_fixed_top(snum, num, norm_shift)
+
+    div_n=sdiv.top
+    num_n=snum.top
+
+    if(num_n <= div_n)then
+        bn_expand(snum, div_n+1)
+        num_n=div_n+1
+        snum.top=num_n
+    end
+
+    loop=num_n-div_n
+
+    wnum=new_ptr(snum.d, loop)
+    wnumtop=new_ptr(snum.d, num_n-1)
+
+    -- Get the top 2 words of sdiv
+    d0=sdiv.d[div_n-1]
+    if div_n==1 then
+        d1=0
+    else
+        d1=sdiv.d[div_n-2]
+    end
+
     local l0
     for i=0,loop do
         q = math.ceil(snum[inum] / sdiv[idiv])

@@ -32,14 +32,15 @@ function ptr_eq(t1,t2)
     return false
 end
 
-function new_ptr(tab)
+function new_ptr(tab, offset)
     local ptr
+    offset=offset or 0
     if tab==nil then
-        ptr={d={}, index=1}
+        ptr={d={}, index=1+offset}
     elseif tab.index~=nil then
-        ptr={d=tab.d, index=tab.index}
+        ptr={d=tab.d, index=tab.index+offset}
     else
-        ptr={d=tab, index=1}
+        ptr={d=tab, index=1+offset}
     end
     setmetatable(ptr, {
         __index=ptr_index, 
