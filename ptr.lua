@@ -1,11 +1,7 @@
 
 
 function ptr_index(ptr, n)
-    if ptr.index ~= nil then
-        return ptr.d[ptr.index+n]
-    else
-        return ptr.d[n]
-    end
+    return ptr.d[ptr.index+n]
 end
 
 function ptr_newindex(tab, key, value)
@@ -34,7 +30,8 @@ end
 
 function new_ptr(tab, offset)
     local ptr
-    offset=offset or 0
+    if offset==nil then offset=0 end
+    
     if tab==nil then
         ptr={d={}, index=1+offset}
     elseif tab.index~=nil then

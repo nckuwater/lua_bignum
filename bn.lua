@@ -33,7 +33,7 @@ function hex2bn(hex)
     
     local blocks = math.floor(len*4 / BN_BITS2)
     local head = (len*4 % BN_BITS2) / 4
-    local k,ir = -1,0
+    local k,ir = 0,0
     local bsize = BN_BITS2 / 4 -- 1 hex = 4bit, # of hex in a block
     local bstr
     --print('bsize'..bsize..' len'..len)
@@ -47,7 +47,7 @@ function hex2bn(hex)
             --print('bstr'..bstr)
             bn.d[ir] = tonumber(bstr, 16)
             ir=ir+1
-            k = -1
+            k = 0
         end
         i = i-1
     end
@@ -82,7 +82,7 @@ function bn_expand(bn, w)
     end
     for i = bn.top, w-1 do
         -- append at higher index
-        table.insert(bn.d, 0)
+        table.insert(bn.d.d, 0)
     end
     bn.dmax = w
     bn.top = w
@@ -246,8 +246,8 @@ function bn_ucmp(a, b)
         return i
     end
 
-    ap=new_ptr(ap)
-    bp=new_ptr(bp)
+    ap=new_ptr(a.d)
+    bp=new_ptr(b.d)
     i = a.top-1
     while i>=0 do
         t1=ap[i]
@@ -320,7 +320,7 @@ function bn_mul_words(rp, ap, num, w)
     ap=new_ptr(ap)
     local c1=0
     while num ~= 0 do
-        c1 = c1 + ap[0] * w
+        c1 = c1 + (ap[0] * w)
         rp[0] = bit.band(c1, BN_MASK2)
         c1 = bit.blogic_rshift(c1, BN_BITS2)
         rp=rp+1
@@ -347,6 +347,11 @@ function bn_mul_add_words(rp, ap, num ,w)
 end
 
 function bn_mul_normal(r, a, na, b, nb)
+    -- all ptr
+    r=new_ptr(r)
+    a=new_ptr(a)
+    b=new_ptr(b)
+
     local rr
     if na < nb then
         local itmp, ltmp
@@ -378,6 +383,7 @@ function bn_mul_normal(r, a, na, b, nb)
 end
 
 function bn_mul_fixed_top(r, a, b)
+    -- all BIGNUM
     local al, bl, top
     al=a.top
     bl=b.top
@@ -428,7 +434,7 @@ function bn_left_align(num)
     m=0
     for i=0, top-1 do
         n=d[i]
-        d[i]=bit.band((bit.bor(bit.blshift(n, lshift), m), BN_MASK2)
+        d[i]=bit.band(bit.bor(bit.blshift(n, lshift), m), BN_MASK2)
         m=bit.band(bit.blogic_rshift(n, rshift), rmask)
     end
     return lshift
@@ -536,6 +542,11 @@ hex1 = "aaffff"
 e = hex2bn(hex1)
 print(textutils.serialiseJSON(e))
 print(bn2hex(e))
+
+hex10="10"
+ten=hex2bn(hex10)
+print(textutils.serialiseJSON(ten))
+print(bn2hex(ten))
 
 --g = new_bn()
 --bn_add(g, d, e)
