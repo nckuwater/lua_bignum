@@ -12,14 +12,23 @@ function new_bn()
     }
     return bn
 end
-
+function bn_new()
+    return new_bn()
+end
 function bn_copy(a, b)
-    bn_expand(a, b)
+    bn_expand(a, b.dmax)
+    a.top=b.top
     for i=0, b.top-1 do
         a.d[i] = b.d[i]
     end
     a.neg = b.neg
     return a
+end
+
+function memset(ptr, num, words)
+    for i=0, words-1 do
+        ptr[i]=num
+    end
 end
 
 function hex2bn(hex)
@@ -126,7 +135,9 @@ function bn_sub_words(r, a, b, n)
     while n ~= 0 do
         t1 = a[0]
         t2 = b[0]
-        r[0] = bit.band(t1 - t2 - c, BN_MASK2)
+        --r[0] = bit.band(t1 - t2 - c, BN_MASK2)
+        r[0] = t1 - t2 - c
+        r=r+1
         if t1 ~= t2 then
             if t1 < t2 then
                 c = 1
@@ -136,7 +147,6 @@ function bn_sub_words(r, a, b, n)
         end
         a = a + 1
         b = b + 1
-        r = r + 1
         n = n - 1
     end
     return c
@@ -146,6 +156,8 @@ function bn_uadd(r, a, b)
     local max, min, dif
     local ap, bp
     local rp, carry, t1, t2
+    bn_check_top(a)
+    bn_check_top(b)
 
     if(a.top < b.top)then
         local tmp = a
@@ -186,6 +198,8 @@ function bn_usub(r, a, b)
     local max, min, dif
     local t1, t2, borrow, rp
     local ap, bp
+    bn_check_top(a)
+    bn_check_top(b)
 
     max = a.top
     min = b.top
@@ -220,7 +234,7 @@ function bn_usub(r, a, b)
         --*(rp++) = t2;
         rp[0] = t2
         rp=rp+1
-        ir = ir+1
+
         --borrow &= (t1 == 0) -- borrow from the next number, if the number != 0 it can handle it, then borrow stop.
         if t1 == 0 then borrow = bit.band(borrow, 1) else borrow = bit.band(borrow, 0) end
     end
@@ -417,10 +431,11 @@ function bn_num_bit_word(l)
         l=bit.blshift(l,1)
         bits=bits+1
     end
-    return bits
+    return BN_BITS2-bits
 end
 
 function bn_left_align(num)
+    bn_check_top(num)
     local d,n,m,rmask
     d=new_ptr(num.d)
     local top=num.top
@@ -429,7 +444,7 @@ function bn_left_align(num)
 
     lshift=BN_BITS2-rshift
     rshift=rshift%BN_BITS2
-    if rshift==1 then rmask=BN_MASK2 else rmask=0 end
+    if rshift==0 then rmask=0 else rmask=BN_MASK2 end
     
     m=0
     for i=0, top-1 do
@@ -438,6 +453,101 @@ function bn_left_align(num)
         m=bit.band(bit.blogic_rshift(n, rshift), rmask)
     end
     return lshift
+end
+
+function bn_lshift_fixed_top(r,a,n)
+    local i,nw
+    local lb,rb
+    local t,f
+    local l,m,rmask
+    rmask=0
+
+    nw=math.floor(n/BN_BITS2)
+
+    bn_expand(r,a.top+nw+1)
+
+    if(a.top~=0)then
+        lb=n%BN_BITS2
+        rb=BN_BITS2-lb
+        rb=rb%BN_BITS2
+        if rb==0 then rmask=0 else rmask=BN_MASK2 end
+        f=new_ptr(a.d)
+        t=new_ptr(r.d,nw)
+        l=f[a.top-1]
+        t[a.top]=bit.band(BN_MASK2, bit.blogic_rshift(l, rb))
+        for i=a.top-1, 1, -1 do
+            m=bit.blshift(l,lb)
+            l=f[i-1]
+            t[i]=bit.band(BN_MASK2, bit.bor(m, bit.band(BN_MASK2, bit.blogic_rshift(l, rb))))
+        end
+        t[0]=bit.band(BN_MASK2, bit.blshift(l, lb))
+    else
+        r.d[nw]=0
+    end
+    if(nw~=0)then
+        memset(r.d, 0, nw)
+    end
+    r.neg=a.neg
+    r.top=a.top+nw+1
+    return 1
+end
+function bn_rshift_fixed_top(r,a,n)
+    local i,top,nw
+    local lb,rb
+    local t,f
+    local l,m,mask
+
+    nw=math.floor(n/BN_BITS2)
+    if nw>=a.top then
+        bn_zero(r)
+        return 1
+    end
+
+    rb=n%BN_BITS2
+    lb=BN_BITS2-rb
+    lb=lb%BN_BITS2
+    if lb==0 then mask=0 else mask=BN_MASK2 end
+    top=a.top-nw
+    if(r~=a) then
+        bn_expand(r,top)
+    end
+    t=new_ptr(r.d)
+    f=new_ptr(a.d, nw)
+    l=f[0]
+    i=0
+    while i<top-1 do
+        m=f[i+1]
+        t[i]=bit.bor(bit.blogic_rshift(l, rb), bit.band(bit.blshift(m, lb), BN_MASK2))
+        l=m
+        i=i+1
+    end
+    t[i]=bit.blogic_rshift(l, rb)
+    r.neg=a.neg
+    r.top=top
+    return 1
+end
+
+function bn_div_3_words(m,d1,d0)
+    m=new_ptr(m)
+    local R=bit.bor(bit.blshift(m[0], BN_BITS2), m[-1])
+    local D=bit.bor(bit.blshift(d0, BN_BITS2), d1)
+    local Q, mask,i
+    Q=0
+
+    for i=0, BN_BITS2-1 do
+        Q=bit.blshift(Q,1)
+        if(R>=D)then
+            Q=bit.bor(Q,1)
+            R=R-D
+        end
+        D=bit.blogic_rshift(D, 1)
+    end
+    if bit.blogic_rshift(Q, BN_BITS2-1)==0 then mask=0 else mask=BN_MASK2 end
+    
+    Q=bit.blshift(Q,1)
+    if R>=D then Q=bit.bor(Q, 1) else Q=bit.bor(Q,0) end
+
+    return bit.band(BN_MASK2, bit.bor(Q, mask))
 end
 
 function bn_div_fixed_top(dv, rm, num, divisor)
@@ -450,6 +560,12 @@ function bn_div_fixed_top(dv, rm, num, divisor)
     local resp, wnum, wnumtop
     local d0,d1
     local num_n,div_n
+
+    bn_check_top(num)
+    bn_check_top(divisor)
+    bn_check_top(dv)
+    bn_check_top(rm)
+
     if dv==nil then
         res=bn_new()
     else
@@ -467,9 +583,10 @@ function bn_div_fixed_top(dv, rm, num, divisor)
 
     div_n=sdiv.top
     num_n=snum.top
-
+    
     if(num_n <= div_n)then
         bn_expand(snum, div_n+1)
+        --memset(new_ptr(snum,num_n),0,div_n-num_n+1)
         num_n=div_n+1
         snum.top=num_n
     end
@@ -496,7 +613,10 @@ function bn_div_fixed_top(dv, rm, num, divisor)
 
     local q, l0
     for i=0,loop-1 do
-        q = math.ceil(snum[inum] / sdiv[idiv])
+        q = bn_div_3_words(wnumtop,d1,d0)
+        print(string.format("%4x %4x", wnumtop[0], wnumtop[-1]))
+        print(string.format("%4x %4x", d0, d1))
+        print(string.format("Q=%x", q))
         l0=bn_mul_words(tmp.d, sdiv.d, div_n, q)
         tmp.d[div_n]=l0 -- add the carry black
         wnum=wnum-1
@@ -514,7 +634,9 @@ function bn_div_fixed_top(dv, rm, num, divisor)
         wnumtop[0]=wnumtop[0]+l0
 
         if(wnumtop[0]~=0)then
-            error('error *wnumtop==0')
+            -- this number should be zero after this part of division
+            -- otherwise something went wrong
+            error('error *wnumtop~=0')
         end
 
         resp=resp-1
@@ -530,32 +652,59 @@ function bn_div_fixed_top(dv, rm, num, divisor)
     end
     return 1
 end
+function bn_div(dv,rm,num,divisor)
+    local ret
+    ret=bn_div_fixed_top(dv,rm,num,divisor)
+    if(ret==1)then
+
+    end
+    return ret
+end
 
 
+function mul_test()
+    hex1 = "-aafffe"
+    d = hex2bn(hex1)
+    print(textutils.serialiseJSON(d))
+    print(bn2hex(d))
 
-hex1 = "-aafffe"
-d = hex2bn(hex1)
-print(textutils.serialiseJSON(d))
-print(bn2hex(d))
+    hex1 = "aaffff"
+    e = hex2bn(hex1)
+    print(textutils.serialiseJSON(e))
+    print(bn2hex(e))
 
-hex1 = "aaffff"
-e = hex2bn(hex1)
-print(textutils.serialiseJSON(e))
-print(bn2hex(e))
+    hex10="10"
+    ten=hex2bn(hex10)
+    print(textutils.serialiseJSON(ten))
+    print(bn2hex(ten))
 
-hex10="10"
-ten=hex2bn(hex10)
-print(textutils.serialiseJSON(ten))
-print(bn2hex(ten))
+    --g = new_bn()
+    --bn_add(g, d, e)
+    --print(textutils.serialiseJSON(g))
+    --print(bn2hex(g))
 
---g = new_bn()
---bn_add(g, d, e)
---print(textutils.serialiseJSON(g))
---print(bn2hex(g))
+    f = new_bn()
+    bn_mul(f, d, e)
+    --bn_check_top(f)
+    print("f bn")
+    print(textutils.serialiseJSON(f))
+    print(bn2hex(f))
+end
+function div_test()
+    local ha="abeef110"
+    local hb="accdeee"
 
-f = new_bn()
-bn_mul(f, d, e)
---bn_check_top(f)
-print("f bn")
-print(textutils.serialiseJSON(f))
-print(bn2hex(f))
+    local a,b=hex2bn(ha),hex2bn(hb)
+    local dv,rm=new_bn(),new_bn()
+
+    
+    print(bn2hex(a))
+    print(bn2hex(b))
+    print("start div")
+    bn_div(dv,rm,a,b)
+    print(textutils.serialiseJSON(dv))
+    print(bn2hex(dv))
+    print(textutils.serialiseJSON(rm))
+    print(bn2hex(rm))
+end
+div_test()
