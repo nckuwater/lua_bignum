@@ -481,15 +481,48 @@ function bn_div_fixed_top(dv, rm, num, divisor)
         d1=sdiv.d[div_n-2]
     end
 
-    local l0
-    for i=0,loop do
+    bn_expand(res, loop)
+    res.neg=bit.bxor(num.neg, divisor.neg)
+    res.top=loop
+    resp=new_ptr(res.d, loop)
+
+    bn_expand(tmp, div_n+1)
+
+    local q, l0
+    for i=0,loop-1 do
         q = math.ceil(snum[inum] / sdiv[idiv])
         l0=bn_mul_words(tmp.d, sdiv.d, div_n, q)
-        tmp.d[div_n+1]=l0 -- add the carry black
+        tmp.d[div_n]=l0 -- add the carry black
+        wnum=wnum-1
 
+        l0=bn_sub_words(wnum,wnum,tmp.d, div_n+1)
+        q=q-l0
+
+        --l0=0-l0
+        if l0==0 then l0=0 else l0=BN_MASK2 end
+
+        for j=0,div_n-1 do
+            tmp.d[j]=bit.band(sdiv.d[j], l0)
+        end
+        l0=bn_add_words(wnum,wnum,tmp.d,div_n)
+        wnumtop[0]=wnumtop[0]+l0
+
+        if(wnumtop[0]~=0)then
+            error('error *wnumtop==0')
+        end
+
+        resp=resp-1
+        resp[0]=q
+
+        -- loop
+        wnumtop=wnumtop-1
     end
-
-
+    snum.neg=num.neg
+    snum.top=div_n
+    if(rm~=nil)then
+        bn_rshift_fixed_top(rm,snum,norm_shift)
+    end
+    return 1
 end
 
 
