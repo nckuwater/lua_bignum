@@ -891,6 +891,24 @@ function bn_num_bits(a)
 end
 
 ---- MONT ----
+function bn_consttime_swap(condition, a, b, nwords)
+    local t, i
+    if(a==b) then return end
+
+    condition=(bit.blogic_rshift(bit.band(bit.bnot(condition),(condition-1)),(BN_BITS2-1)))-1
+    t=bit.band(bit.bxor(a.top, b.top), condition)
+    a.top=bit.bxor(a.top,t)
+    b.top=bit.bxor(b.top,t)
+    t=bit.band(bit.bxor(a.neg, b.neg), condition)
+    a.neg=bit.bxor(a.neg,t)
+    b.neg=bit.bxor(b.neg,t)
+    for i=0, nwords-1 do
+        t=bit.band(bit.bxor(a.d[i],b.d[i]), condition)
+        a.d[i]=bit.bxor(a.d[i],t)
+        b.d[i]=bit.bxor(b.d[i],t)
+    end
+end
+
 function bn_mont_ctx_new()
     local ret
     ret={}
@@ -935,6 +953,72 @@ function bn_mont_ctx_set(mont, mod)
     mont.RR.top=ret
     ret=1
     return ret
+end
+
+function bn_mask_bits(a,n)
+    local b,w
+    bn_check_top(a)
+    w=math.floor(n/BN_BITS2)
+    b=n%BN_BITS2
+    if w>=a.top then return 0 end
+    if b==0 then
+        a.top=w
+    else
+        a.top=w+1
+        a.d[w]=bit.band(a.d[w],bit.bnot(bit.blshift(BN_MASK2,b)))
+    end
+    bn_check_top(a)
+    return 1
+end
+
+function bn_from_mont_fixed_top(ret, a, mont)
+    local retn=0
+    local t1,t2
+    t1=bn_new()
+    t2=bn_new()
+    bn_copy(t1,a)
+    bn_mask_bits(t1,mont.ri)
+
+    bn_mul(t2,t1,mont.Ni)
+    bn_mask_bits(t2,mont.ri)
+
+    bn_mul(t1,t2,mont.N)
+    bn_add(t2,a,t1)
+    bn_rshift(ret,t2,mont.ri)
+    if bn_ucmp(ret, mont.N)>=0 then
+        bn_usub(ret,ret,mont.N)
+    end
+    retn=1
+    bn_check_top(ret)
+    return retn
+end
+
+function bn_from_montgomery(ret, a, mont)
+    local retn
+    retn = bn_from_mont_fixed_top(ret, a, mont)
+    bn_check_top(ret)
+    if retn==0 then
+        error('ERR bn_from_mont')
+    end
+    return retn
+end
+
+function bn_mul_mont_fixed_top(r,a,b,mont)
+    local tmp
+    local ret
+    local num=mont.N.top
+    if (a.top+b.top)>2*num then return 0 end
+
+    tmp=bn_new()
+    bn_check_top(tmp)
+    bn_mul_fixed_top(tmp,a,b)
+    bn_from_montgomery(r,tmp,mont)
+    ret=1
+    return ret
+end
+
+function bn_to_mont_fixed_top(r,a,mont)
+    return bn_mul_mont_fixed_top(r,a,mont.RR, mont)
 end
 
 
