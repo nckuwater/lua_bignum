@@ -671,7 +671,7 @@ end
 
 function bn_nnmod(r,m,d)
     bn_mod(r,m,d)
-    if ~r.neg then
+    if r.neg==0 then
         return 1
     end
     if d.neg==1 then
@@ -703,6 +703,191 @@ function bn_mod_mul(r,a,b,m)
     bn_check_top(r)
     ret=1
     return ret
+end
+
+function bn_gcd(r,in_a, in_b)-- not test yet
+    local g,temp
+    temp=nil
+    local mask=0
+    local i,j,top,rlen,glen,m
+    local bit,delta,cond,shifts,ret=1,1,0,0,0
+    if bn_is_zero(in_b) then
+        ret=bn_copy(r,in_a)
+        r.neg=0
+        return ret
+    elseif bn_is_zero(in_a) then
+        ret=bn_copy(r,in_b)
+        r.neg=0
+        return ret
+    end
+
+    bn_check_top(in_a)
+    bn_check_top(in_b)
+
+    temp=bn_new()
+    g=bn_new()
+
+    bn_lshift1(g,in_b)
+    bn_lshift1(r,in_a)
+
+    i=0
+    while(i<r.dmax and i<g.dmax) do
+        mask=bit.bnot(bit.bor(r.d[i],g.d[i]))
+        for j=0,BN_BITS2-1 do
+            bit=bit.band(mask)
+            shifts=shifts+bit
+            mask=bit.blogic_rshift(mask,1)
+        end
+
+        --loop end
+        i=i+1
+    end
+    bn_rshift(r,r,shifts)
+    bn_rshift(g,g,shifts)
+    if r.top>=g.top then top=1+r.top else top=1+g.top end
+    bn_expand(r,top)
+    bn_expand(g,top)
+    bn_expand(temp,top)
+
+    bn_consttime_swap(bit.band(1,bit.bnot(r.d[0])),r,g,top)
+    rlen=bn_num_bits(r)
+    glen=bn_num_bits(g)
+    if rlen>=glen then m=4+3*rlen else m=4+3*glen end
+
+    for i=0, m-1 do
+        cond=bit.band(bit.blogic_rshift(-delta,8*2-1), g.d[0])
+        cond=bit.band(cond, 1)
+        cond=bit.band(cond,bit.blogic_rshift(bit.bnot(g.top-1), 2*8-1))
+        delta=bit.bor(bit.band(-cond, -delta), bit.band((cond-1),delta))
+        r.neg=bit.bxor(r.neg, cond)
+        bn_consttime_swap(cond,r,g,top)
+        delta=delta+1
+        bn_add(temp,g,r)
+        local arg1=bit.blogic_rshift(bit.bnot(g.top-1),(2*8-1))
+        arg1=bit.band(arg1,bit.band(g.d[0],1))
+        bn_consttime_swap(arg1,g,temp,top)
+        bn_rshift1(g,g)
+    end
+    r.neg=0
+    bn_lshift(r,r,shifts)
+    bn_rshift1(r,r)
+    ret=1
+    return ret
+end
+
+function int_bn_mod_inverse(inn, a, n)--pnoinv=if no inverse exists
+    -- but lua have no int pointer
+    local A,B,X,Y,M,D,T,R
+    local ret
+    local sign
+    local pnoinv
+    bn_check_top(a)
+    bn_check_top(n)
+
+    A=bn_new()
+    B=bn_new()
+    C=bn_new()
+    D=bn_new()
+    M=bn_new()
+    Y=bn_new()
+    T=bn_new()
+    if inn==nil then
+        R=bn_new()
+    else
+        R=inn
+    end
+    bn_one(X)
+    bn_zero(Y)
+    bn_copy(B,a)
+    bn_copy(A,n)
+    A.neg=0
+    if B.neg or bn_ucmp(B,A)>=0 then
+        bn_nnmod(B,B,A)
+    end
+    sign=-1
+    local tmp
+    while(bn_is_zero(B)==0)do
+        bn_div(D,M,A,B)
+        tmp=A
+        A=B
+        B=M
+        if bn_is_one(D) then
+            bn_add(tmp,X,Y)
+        else
+            bn_mul(tmp,D,X)
+            bn_add(tmp,tmp,Y)
+        end
+        M=Y
+        Y=X
+        X=tmp
+        sign=-sign
+    end
+
+    if sign<0 then
+        bn_sub(Y,n,Y)
+    end
+    if bn_is_one(A)then
+        if Y.neg==0 and bn_ucmp(Y,n)<0 then
+            bn_copy(R,Y)
+        else
+            bn_nnmod(R,Y,n)
+        end
+    else
+        pnoinv=1
+        error('what')
+    end 
+    ret=R
+    bn_check_top(ret)
+    -- ret is the result, because inn can be nil and allocate by this function
+    return ret 
+end
+
+function bn_mod_inverse(inn, a, n)
+    local rv
+    local noinv=0
+    rv=int_bn_mod_inverse(inn, a, n)
+    return rv
+end
+
+function bn_is_zero(a)
+    if a.top==0 then return 1 else return 0 end
+end
+
+function bn_is_one(a)
+    if bn_abs_is_word(a,1) and a.neg==0 then return 1 else return 0 end
+end
+
+function bn_abs_is_word(a, w)
+    if (a.top==1 and a.d[0]==w) or (w==0 and a.top==0) then 
+    return 1 else return 0 end
+end
+
+function bn_set_bit(a, n)
+    -- n is index of bit, not number of bit
+    local i,j,k
+    if n<0 then
+        return 0
+    end
+    i=math.floor(n/BN_BITS2)
+    j=n%BN_BITS2
+    if(a.top<=i)then
+        bn_expand(a, i+1)
+        for k=a.top, i do
+            a.d[k]=0
+        end
+        a.top=i+1
+    end
+    a.d[i] = bit.bor(a.d[i],bit.blshift(1,j))
+    bn_check_top(a)
+
+    return 1
+end
+
+function bn_num_bits(a)
+    local i=a.top-1
+    bn_check_top(a)
+    if bn_is_zero(a) then return 0 end
+    return ((i*BN_BITS2)+bn_num_bits_word(a.d[i]))
 end
 
 ---- MONT ----
