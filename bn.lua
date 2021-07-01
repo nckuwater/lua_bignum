@@ -669,6 +669,97 @@ function bn_div(dv,rm,num,divisor)
     return ret
 end
 
+function bn_nnmod(r,m,d)
+    bn_mod(r,m,d)
+    if ~r.neg then
+        return 1
+    end
+    if d.neg==1 then
+        bn_sub(r,r,d)
+    else
+        bn_add(r,r,d)
+    end
+    return 1
+end
+
+function bn_mod(rem,m,d)
+    return bn_div(nil, rem, m ,d)
+end
+
+function bn_mod_sub(r,a,b,m)
+    bn_sub(r,a,b)
+    return bn_nnmod(r,r,m)
+end
+
+function bn_mod_mul(r,a,b,m)
+    local t
+    local ret=0
+    bn_check_top(a)
+    bn_check_top(b)
+    bn_check_top(m)
+    t=bn_new()
+    bn_mul(t,a,b)
+    bn_nnmod(r,t,m)
+    bn_check_top(r)
+    ret=1
+    return ret
+end
+
+---- MONT ----
+function bn_mont_ctx_new()
+    local ret
+    ret={}
+    bn_mont_ctx_init(ret)
+    return ret
+end
+
+function bn_mont_ctx_init(ctx)
+    ctx.ri=0
+    bn_zero(ctx.RR)
+    bn_zero(ctx.N)
+    bn_zero(ctx.Ni)
+    ctx.n0=new_ptr({0,0})
+end
+
+function bn_mont_ctx_set(mont, mod)
+    -- RR, ri, N, Ni
+    local i, ret
+    ret=0
+    local Ri, R
+    Ri=bn_new()
+    R=mont.RR
+    bn_copy(mont.N, mod)
+    mont.N.neg=0
+
+    mont.ri=bn_num_bits(mont.N)
+    bn_zero(R)
+    bn_set_bit(R, mont.ri)
+    bn_modinverse(R1,R,mont.N)
+    bn_lshift(Ri,Ri,mont.ri)
+    bn_sub_word(Ri, 1)
+    -- Ni=(R*Ri-1)/N
+    bn_div(mont.Ni, nil, Ri, mont.N)
+
+    bn_zero(mont.RR)
+    bn_set_bit(mont.RR, mont.ri*2)
+    bn_mod(mont.RR, mont.RR, mont.N)
+    ret=mont.N.top
+    for i=mont.RR.top, ret-1 do
+        mont.RR.d[i]=0
+    end
+    mont.RR.top=ret
+    ret=1
+    return ret
+end
+
+
+function bn_mod_exp(r,a,p,m)
+    bn_check_top(a)
+    bn_check_top(p)
+    bn_check_top(m)
+
+
+end
 
 function mul_test()
     hex1 = "-aafffe"
@@ -716,4 +807,5 @@ function div_test()
     print(textutils.serialiseJSON(rm))
     print(bn2hex(rm))
 end
-div_test()
+
+
