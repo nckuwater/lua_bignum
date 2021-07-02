@@ -16,16 +16,20 @@ function bn_new()
     return new_bn()
 end
 function bn_copy(a, b)
+    if a==b then
+        return a
+    end
     bn_expand(a, b.dmax)
-    a.top=b.top
-    for i=0, b.top-1 do
+    for i=0, b.dmax-1 do
         a.d[i] = b.d[i]
     end
     a.neg = b.neg
+    a.top = b.top
     return a
 end
 
 function memset(ptr, num, words)
+    ptr=new_ptr(ptr)
     for i=0, words-1 do
         ptr[i]=num
     end
@@ -47,6 +51,7 @@ function hex2bn(hex)
     local bstr
     --print('bsize'..bsize..' len'..len)
     bn_expand(bn, blocks+1)
+    bn.top=blocks
     local i=len
     while(i ~= ih) do
         k = k+1
@@ -89,22 +94,51 @@ function bn_expand(bn, w)
     if(bn.dmax >= w) then
         return bn
     end
+    local i
     for i = bn.top, w-1 do
         -- append at higher index
         table.insert(bn.d.d, 0)
     end
     bn.dmax = w
-    bn.top = w
+    --bn.top = w
     return bn
 end
 
 function bn_check_top(bn)
+    --[[if bn==nil then return end
     local i=bn.top-1
     while bn.d[i] == 0 do
         bn.top = bn.top-1
         i=i-1
     end
     return bn
+    ]]--
+    if bn~=nil then
+        local top=bn.top
+        if(top==0 and bn.neg==0)then return 1 end
+        if(bn.d[top-1]~=0)then return 1 end
+        return 0
+    end
+    return 1
+end
+
+function bn_correct_top(a)
+    local ftl
+    local tmp_top=a.top
+    if tmp_top>0 then
+        ftl=new_ptr(a.d,tmp_top)
+        while(tmp_top>0)do
+            ftl=ftl-1
+            if(ftl[0]~=0)then break end
+
+            tmp_top=tmp_top-1
+        end
+        a.top=tmp_top
+    end
+    if a.top==0 then
+        a.neg=0
+    end
+
 end
 
 function bn_add_words(r, a, b, n)
@@ -210,10 +244,7 @@ function bn_usub(r, a, b)
         return 0
     end
 
-    if (bn_expand(r, max) == 0)then
-        printf("sub expand failed\n")
-        return 0
-    end
+    bn_expand(r, max)
 
     ap = new_ptr(a.d)
     bp = new_ptr(b.d)
@@ -277,6 +308,10 @@ end
 function bn_zero(a)
     a.neg = 0
     a.top = 0
+end
+
+function bn_one(a)
+    bn_set_word(a,1)
 end
 
 function bn_add(r, a, b)
@@ -415,6 +450,7 @@ end
 
 function bn_mul(r,a,b)
     ret = bn_mul_fixed_top(r,a,b)
+    bn_correct_top(r)
     bn_check_top(r)
     return ret
 end
@@ -435,7 +471,7 @@ function bn_num_bit_word(l)
 end
 
 function bn_left_align(num)
-    bn_check_top(num)
+    bn_correct_top(num)
     local d,n,m,rmask
     d=new_ptr(num.d)
     local top=num.top
@@ -447,6 +483,7 @@ function bn_left_align(num)
     if rshift==0 then rmask=0 else rmask=BN_MASK2 end
     
     m=0
+
     for i=0, top-1 do
         n=d[i]
         d[i]=bit.band(bit.bor(bit.blshift(n, lshift), m), BN_MASK2)
@@ -474,7 +511,7 @@ function bn_lshift_fixed_top(r,a,n)
         f=new_ptr(a.d)
         t=new_ptr(r.d,nw)
         l=f[a.top-1]
-        t[a.top]=bit.band(BN_MASK2, bit.blogic_rshift(l, rb))
+        t[a.top]=bit.band(rmask, bit.blogic_rshift(l, rb))
         for i=a.top-1, 1, -1 do
             m=bit.blshift(l,lb)
             l=f[i-1]
@@ -485,7 +522,7 @@ function bn_lshift_fixed_top(r,a,n)
         r.d[nw]=0
     end
     if(nw~=0)then
-        memset(r.d, 0, nw)
+        memset(new_ptr(r.d), 0, nw)
     end
     r.neg=a.neg
     r.top=a.top+nw+1
@@ -542,6 +579,7 @@ function bn_div_3_words(m,d1,d0)
         end
         D=bit.blogic_rshift(D, 1)
     end
+    Q=bit.band(Q,BN_MASK2)
     if bit.blogic_rshift(Q, BN_BITS2-1)==0 then mask=0 else mask=BN_MASK2 end
     
     Q=bit.blshift(Q,1)
@@ -576,17 +614,24 @@ function bn_div_fixed_top(dv, rm, num, divisor)
     sdiv=bn_new()
 
     bn_copy(sdiv, divisor)
+
     norm_shift=bn_left_align(sdiv)
     sdiv.neg=0
 
     bn_lshift_fixed_top(snum, num, norm_shift)
+    --print('normshift=',norm_shift)
 
+    --print("INIT snum")
+    --print(bn2hex(snum))
+
+    --print("INIT sdiv")
+    --print(bn2hex(sdiv))
     div_n=sdiv.top
     num_n=snum.top
     
     if(num_n <= div_n)then
         bn_expand(snum, div_n+1)
-        --memset(new_ptr(snum,num_n),0,div_n-num_n+1)
+        memset(new_ptr(snum,num_n),0,div_n-num_n+1)
         num_n=div_n+1
         snum.top=num_n
     end
@@ -613,22 +658,25 @@ function bn_div_fixed_top(dv, rm, num, divisor)
 
     local q, l0
     for i=0,loop-1 do
+        --print('i=',i)
+        --print(string.format("%04x %04x", wnumtop[0], wnumtop[-1]))
+        --print(string.format("%04x %04x", d0, d1))
+        --print(bn2hex(snum))
         q = bn_div_3_words(wnumtop,d1,d0)
-        print(string.format("%4x %4x", wnumtop[0], wnumtop[-1]))
-        print(string.format("%4x %4x", d0, d1))
-        print(string.format("Q=%x", q))
+        --print(string.format("Q=%x", q))
         l0=bn_mul_words(tmp.d, sdiv.d, div_n, q)
         tmp.d[div_n]=l0 -- add the carry black
         wnum=wnum-1
 
-
-        print(bn2hex(snum))
-        print(bn2hex(tmp))
+        --print("snum")
+        --print(bn2hex(snum))
+        --print("tmp")
+        --print(bn2hex(tmp))
 
         l0=bn_sub_words(wnum,wnum,tmp.d, div_n+1)
 
-        print("after sub")
-        print(bn2hex(snum))
+        --print("after sub")
+        --print(bn2hex(snum))
         q=q-l0
 
         --l0=0-l0
@@ -637,10 +685,11 @@ function bn_div_fixed_top(dv, rm, num, divisor)
         for j=0,div_n-1 do
             tmp.d[j]=bit.band(sdiv.d[j], l0)
         end
-        print(bn2hex(tmp))
+        --print(bn2hex(tmp))
         l0=bn_add_words(wnum,wnum,tmp.d,div_n)
-        wnumtop[0]=bit.band(wnumtop[0]+l0, BN_MASK2)
-        print(bn2hex(snum))
+        --wnumtop[0]=bit.band(wnumtop[0]+l0, BN_MASK2)
+        wnumtop[0]=wnumtop[0]+l0
+        --print(bn2hex(snum))
         if(wnumtop[0]~=0)then
             -- this number should be zero after this part of division
             -- otherwise something went wrong
@@ -651,6 +700,7 @@ function bn_div_fixed_top(dv, rm, num, divisor)
         resp[0]=q
 
         -- loop
+        print("--loop end--")
         wnumtop=wnumtop-1
     end
     snum.neg=num.neg
@@ -664,7 +714,12 @@ function bn_div(dv,rm,num,divisor)
     local ret
     ret=bn_div_fixed_top(dv,rm,num,divisor)
     if(ret==1)then
-
+        if dv~=nil then
+            bn_correct_top(dv)
+        end
+        if rm~=nil then
+            bn_correct_top(rm)
+        end
     end
     return ret
 end
@@ -711,11 +766,11 @@ function bn_gcd(r,in_a, in_b)-- not test yet
     local mask=0
     local i,j,top,rlen,glen,m
     local bit,delta,cond,shifts,ret=1,1,0,0,0
-    if bn_is_zero(in_b) then
+    if bn_is_zero(in_b)==1 then
         ret=bn_copy(r,in_a)
         r.neg=0
         return ret
-    elseif bn_is_zero(in_a) then
+    elseif bn_is_zero(in_a)==1 then
         ret=bn_copy(r,in_b)
         r.neg=0
         return ret
@@ -786,7 +841,7 @@ function int_bn_mod_inverse(inn, a, n)--pnoinv=if no inverse exists
 
     A=bn_new()
     B=bn_new()
-    C=bn_new()
+    X=bn_new()
     D=bn_new()
     M=bn_new()
     Y=bn_new()
@@ -801,17 +856,24 @@ function int_bn_mod_inverse(inn, a, n)--pnoinv=if no inverse exists
     bn_copy(B,a)
     bn_copy(A,n)
     A.neg=0
-    if B.neg or bn_ucmp(B,A)>=0 then
+    print("NNMOD")
+    print(bn2hex(A))
+    print(bn2hex(B))
+    --print(bn2hex(A))
+    if B.neg==1 or bn_ucmp(B,A)>=0 then
         bn_nnmod(B,B,A)
     end
+    print("NNMOD-END")
     sign=-1
     local tmp
     while(bn_is_zero(B)==0)do
+        print("B")
+        print(bn2hex(B))
         bn_div(D,M,A,B)
         tmp=A
         A=B
         B=M
-        if bn_is_one(D) then
+        if bn_is_one(D)==1 then
             bn_add(tmp,X,Y)
         else
             bn_mul(tmp,D,X)
@@ -826,7 +888,7 @@ function int_bn_mod_inverse(inn, a, n)--pnoinv=if no inverse exists
     if sign<0 then
         bn_sub(Y,n,Y)
     end
-    if bn_is_one(A)then
+    if bn_is_one(A)==1 then
         if Y.neg==0 and bn_ucmp(Y,n)<0 then
             bn_copy(R,Y)
         else
@@ -883,11 +945,11 @@ function bn_set_bit(a, n)
     return 1
 end
 
-function bn_num_bits(a)
-    local i=a.top-1
-    bn_check_top(a)
-    if bn_is_zero(a) then return 0 end
-    return ((i*BN_BITS2)+bn_num_bits_word(a.d[i]))
+function bn_num_bits(bn)
+    local i=bn.top-1
+    bn_check_top(bn)
+    if bn_is_zero(bn)==1 then return 0 end
+    return ((i*BN_BITS2)+bn_num_bit_word(bn.d[i]))
 end
 
 function bn_set_word(a,w)
@@ -932,16 +994,20 @@ end
 function bn_mont_ctx_new()
     local ret
     ret={}
-    bn_mont_ctx_init(ret)
+    ret = bn_mont_ctx_init(ret)
     return ret
 end
 
 function bn_mont_ctx_init(ctx)
     ctx.ri=0
+    ctx.RR=bn_new()
+    ctx.N=bn_new()
+    ctx.Ni=bn_new()
     bn_zero(ctx.RR)
     bn_zero(ctx.N)
     bn_zero(ctx.Ni)
     ctx.n0=new_ptr({0,0})
+    return ctx
 end
 
 function bn_mont_ctx_set(mont, mod)
@@ -956,13 +1022,18 @@ function bn_mont_ctx_set(mont, mod)
 
     mont.ri=bn_num_bits(mont.N)
     bn_zero(R)
+    
     bn_set_bit(R, mont.ri)
-    bn_modinverse(R1,R,mont.N)
+    print("R")
+    print(bn2hex(mont.N))
+    bn_mod_inverse(Ri,R,mont.N) --ERR
+    print("EEE")
     bn_lshift(Ri,Ri,mont.ri)
     bn_sub_word(Ri, 1)
     -- Ni=(R*Ri-1)/N
+    
     bn_div(mont.Ni, nil, Ri, mont.N)
-
+    print("EEE")
     bn_zero(mont.RR)
     bn_set_bit(mont.RR, mont.ri*2)
     bn_mod(mont.RR, mont.RR, mont.N)
@@ -1016,6 +1087,7 @@ end
 function bn_from_montgomery(ret, a, mont)
     local retn
     retn = bn_from_mont_fixed_top(ret, a, mont)
+    bn_correct_top(ret)
     bn_check_top(ret)
     if retn==0 then
         error('ERR bn_from_mont')
@@ -1042,7 +1114,7 @@ function bn_to_mont_fixed_top(r,a,mont)
 end
 
 
-function bn_window_bits_for_exponent_size(int b)then
+function bn_window_bits_for_exponent_size(b)
     if b>671 then return 6 end
     if b>239 then return 5 end
     if b>79 then return 4 end
@@ -1064,7 +1136,10 @@ function bn_mod_exp_mont(rr,a,p,m, in_mont)
     bn_check_top(p)
     bn_check_top(m)
 
+    --print(bn2hex(p))
+    --print(textutils.serialiseJSON(p))
     bits=bn_num_bits(p)
+    
     if(bits==0)then
         if bn_abs_is_word(m,1)then
             ret=1
@@ -1078,15 +1153,15 @@ function bn_mod_exp_mont(rr,a,p,m, in_mont)
     d=bn_new()
     r=bn_new()
     val[0]=bn_new()
-
+    print("START MONT set")
     if in_mont~=nil then
         mont=in_mont
     else
         mont=bn_mont_ctx_new()
         bn_mont_ctx_set(mont, m)
     end
-
-    if a.neg or bn_ucmp(a,m)>=0 then
+    print("MONT CTX set")
+    if a.neg==1 or bn_ucmp(a,m)>=0 then
         bn_nnmod(val[0],a,m)
         aa=val[0]
     else
@@ -1107,23 +1182,73 @@ function bn_mod_exp_mont(rr,a,p,m, in_mont)
     wvalue=0
     wstart=bits-1
     wend=0
-
+    
     bn_to_mont_fixed_top(r, bn_value_one(), mont)
+    local CONTINUE=false
+    print("LOOP start")
+    while true do
+        if bn_is_bit_set(p,wstart)==0 then
+            if start==0 then
+                bn_mul_mont_fixed_top(r,r,r,mont)
+            end
+            if wstart==0 then
+                break
+            end
+            wstart=wstart-1
+            --goto continue
+            CONTINUE=true
+        end
+        if not CONTINUE then
+            wvalue=1
+            wend=0
+            for i=1, window-1 do
+                if (wstart-i)<0 then break end
+
+                if bn_is_bit_set(p, wstart-i) then
+                    wvalue=bit.blshift(wvalue,i-wend)
+                    wvalue=bit.bor(wvalue,1)
+                    wend=i
+                end
+            end
+
+            j=wend+1
+            if start==0 then
+                for i=0, j-1 do
+                    bn_mul_mont_fixed_top(r,r,r,mont)
+                end
+            end
+            bn_mul_mont_fixed_top(r,r,val[bit.blogic_rshift(wvalue,1)],mont)
+
+            wstart=wstart-(wend+1)
+            wvalue=0
+            start=0
+            if wstart<0 then
+                break 
+            end
+
+        end
+        CONTINUE=false
+        --::continue::
+    end
+    print(bn2hex(r))
+    bn_from_montgomery(rr,r,mont)
+    ret=1
+    return ret
 end
 
 function mul_test()
-    hex1 = "-aafffe"
-    d = hex2bn(hex1)
+    local hex1 = "-aafffe"
+    local d = hex2bn(hex1)
     print(textutils.serialiseJSON(d))
     print(bn2hex(d))
 
-    hex1 = "aaffff"
-    e = hex2bn(hex1)
+    local hex1 = "aaffff"
+    local e = hex2bn(hex1)
     print(textutils.serialiseJSON(e))
     print(bn2hex(e))
 
-    hex10="10"
-    ten=hex2bn(hex10)
+    local hex10="10"
+    local ten=hex2bn(hex10)
     print(textutils.serialiseJSON(ten))
     print(bn2hex(ten))
 
@@ -1132,7 +1257,7 @@ function mul_test()
     --print(textutils.serialiseJSON(g))
     --print(bn2hex(g))
 
-    f = new_bn()
+    local f = new_bn()
     bn_mul(f, d, e)
     --bn_check_top(f)
     print("f bn")
@@ -1159,15 +1284,31 @@ function div_test()
 end
 
 function exp_test()
-    local ha="aaffaabb"
-    local exp="ffeee"
-    local m="ccbb"
+    local he='10001'
+    local hd='10f22727e552e2c86ba06d7ed6de28326eef76d0128327cd64c5566368fdc1a9f740ad8dd221419a5550fc8c14b33fa9f058b9fa4044775aaf5c66a999a7da4d4fdb8141c25ee5294ea6a54331d045f25c9a5f7f47960acbae20fa27ab5669c80eaf235a1d0b1c22b8d750a191c0f0c9b3561aaa4934847101343920d84f24334d3af05fede0e355911c7db8b8de3bf435907c855c3d7eeede4f148df830b43dd360b43692239ac10e566f138fb4b30fb1af0603cfcf0cd8adf4349a0d0b93bf89804e7c2e24ca7615e51af66dccfdb71a1204e2107abbee4259f2cac917fafe3b029baf13c4dde7923c47ee3fec248390203a384b9eb773c154540c5196bce1'
+    local hn='a709e2f84ac0e21eb0caa018cf7f697f774e96f8115fc2359e9cf60b1dd8d4048d974cdf8422bef6be3c162b04b916f7ea2133f0e3e4e0eee164859bd9c1e0ef0357c142f4f633b4add4aab86c8f8895cd33fbf4e024d9a3ad6be6267570b4a72d2c34354e0139e74ada665a16a2611490debb8e131a6cffc7ef25e74240803dd71a4fcd953c988111b0aa9bbc4c57024fc5e8c4462ad9049c7f1abed859c63455fa6d58b5cc34a3d3206ff74b9e96c336dbacf0cdd18ed0c66796ce00ab07f36b24cbe3342523fd8215a8e77f89e86a08db911f237459388dee642dae7cb2644a03e71ed5c6fa5077cf4090fafa556048b536b879a88f628698f0c7b420c4b7'
+    local hplain='1234'
 
-    local a=hex2bn(ha)
-    local b=hex2bn(exp)
-    local m=hex2bn(m)
-    local r=new_bn()
-    
+    local e=hex2bn(he)
+    local d=hex2bn(hd)
+    local n=hex2bn(hn)
+    local plain=hex2bn(hplain)
+    local rs=new_bn()
+    --print(bn2hex(e))
+    --print(bn2hex(d))
+    --print(bn2hex(n))
+    print(bn2hex(plain))
+    print("start exp")
+    bn_mod_exp_mont(rs,plain,e,n,nil)
+    print(textutils.serialiseJSON(rs))
+    print(bn2hex(rs))
+    --bn_mod_exp_mont(plain,rs,d,n,nil)
+    print(bn2hex(plain))
 end
 
 
+ok,err=xpcall(exp_test, function(err) print(err) end)
+
+if not ok then
+    --printError(debug.traceback(err))
+end
