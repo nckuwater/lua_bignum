@@ -890,6 +890,26 @@ function bn_num_bits(a)
     return ((i*BN_BITS2)+bn_num_bits_word(a.d[i]))
 end
 
+function bn_set_word(a,w)
+    bn_check_top(a)
+    bn_expand(a,1)
+    a.neg=0
+    a.d[0]=w
+    if w==0 then
+        a.top=0
+    else
+        a.top=1
+    end
+    bn_check_top(a)
+    return 1
+end
+
+function bn_value_one()
+    local const_one=bn_new()
+    bn_set_word(const_one, 1)
+    return const_one
+end
+
 ---- MONT ----
 function bn_consttime_swap(condition, a, b, nwords)
     local t, i
@@ -1022,12 +1042,73 @@ function bn_to_mont_fixed_top(r,a,mont)
 end
 
 
-function bn_mod_exp(r,a,p,m)
+function bn_window_bits_for_exponent_size(int b)then
+    if b>671 then return 6 end
+    if b>239 then return 5 end
+    if b>79 then return 4 end
+    if b>23 then return 3 end
+    return 1
+end
+
+function bn_mod_exp_mont(rr,a,p,m, in_mont)
+    local i,j,bits,ret,wstart,wend,window,wvalue
+    ret=0
+    local start=1
+    local d,r
+    local aa
+    local val=new_ptr()
+    for i=1,32 do table.insert(val,0) end
+    local mont=nil
+
     bn_check_top(a)
     bn_check_top(p)
     bn_check_top(m)
 
+    bits=bn_num_bits(p)
+    if(bits==0)then
+        if bn_abs_is_word(m,1)then
+            ret=1
+            bn_zero(rr)
+        else 
+            ret=bn_one(rr)
+        end
+        return ret
+    end
 
+    d=bn_new()
+    r=bn_new()
+    val[0]=bn_new()
+
+    if in_mont~=nil then
+        mont=in_mont
+    else
+        mont=bn_mont_ctx_new()
+        bn_mont_ctx_set(mont, m)
+    end
+
+    if a.neg or bn_ucmp(a,m)>=0 then
+        bn_nnmod(val[0],a,m)
+        aa=val[0]
+    else
+        aa=a
+    end
+    bn_to_mont_fixed_top(val[0],aa,mont)
+    window = bn_window_bits_for_exponent_size(bits)
+    if window>1 then
+        bn_mul_mont_fixed_top(d,val[0],val[0],mont)
+        j = bit.blshift(1,window-1)
+        for i=1, j-1 do
+            val[i]=bn_new()
+            bn_mul_mont_fixed_top(val[i],val[i-1],d,mont)
+        end
+    end
+    start=1
+
+    wvalue=0
+    wstart=bits-1
+    wend=0
+
+    bn_to_mont_fixed_top(r, bn_value_one(), mont)
 end
 
 function mul_test()
@@ -1075,6 +1156,18 @@ function div_test()
     print(bn2hex(dv))
     print(textutils.serialiseJSON(rm))
     print(bn2hex(rm))
+end
+
+function exp_test()
+    local ha="aaffaabb"
+    local exp="ffeee"
+    local m="ccbb"
+
+    local a=hex2bn(ha)
+    local b=hex2bn(exp)
+    local m=hex2bn(m)
+    local r=new_bn()
+    
 end
 
 
