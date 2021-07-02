@@ -362,6 +362,13 @@ function bn_sub(r, a, b)
     return ret
 end
 
+function bn_sub_word(a, w)
+    local word=bn_new()
+    bn_set_word(word,w)
+    bn_sub(a,a,word)
+    return 1
+end
+
 
 function bn_mul_words(rp, ap, num, w)
     -- rp is pre-expanded
@@ -563,6 +570,26 @@ function bn_rshift_fixed_top(r,a,n)
     r.top=top
     return 1
 end
+
+function bn_lshift(r,a,n)
+    local ret
+    if n<0 then
+        return 0
+    end
+    ret=bn_lshift_fixed_top(r,a,n)
+    bn_correct_top(r)
+    bn_check_top(r)
+    return ret
+end
+function bn_rshift(r,a,n)
+    local reet=0
+    if n<0 then return 0 end
+    ret=bn_rshift_fixed_top(r,a,n)
+    bn_correct_top(r)
+    bn_check_top(r)
+    return ret
+end
+
 
 function bn_div_3_words(m,d1,d0)
     m=new_ptr(m)
@@ -923,6 +950,16 @@ function bn_abs_is_word(a, w)
     if (a.top==1 and a.d[0]==w) or (w==0 and a.top==0) then 
     return 1 else return 0 end
 end
+function bn_is_bit_set(a,n)
+    local i,j
+    bn_check_top(a)
+    if n<0 then return 0 end
+    i=math.floor(n,BN_BITS2)
+    j=n%BN_BITS2
+    if a.top<=i then return 0 end
+    return bit.band(bit.blogic_rshift(a.d[i],j),1)
+end
+
 
 function bn_set_bit(a, n)
     -- n is index of bit, not number of bit
@@ -1204,7 +1241,7 @@ function bn_mod_exp_mont(rr,a,p,m, in_mont)
             for i=1, window-1 do
                 if (wstart-i)<0 then break end
 
-                if bn_is_bit_set(p, wstart-i) then
+                if bn_is_bit_set(p, wstart-i)==1 then
                     wvalue=bit.blshift(wvalue,i-wend)
                     wvalue=bit.bor(wvalue,1)
                     wend=i
@@ -1303,6 +1340,7 @@ function exp_test()
     print(textutils.serialiseJSON(rs))
     print(bn2hex(rs))
     --bn_mod_exp_mont(plain,rs,d,n,nil)
+    print('plain result:')
     print(bn2hex(plain))
 end
 
