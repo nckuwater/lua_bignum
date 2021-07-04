@@ -4,6 +4,8 @@ BN_MASK2 = 0xffff
 BN_BITS2 = 16
 BN_BYTES2=math.floor(BN_BITS2/8)
 
+local RSA_FIPS1864_MIN_KEYGEN_KEYSIZE = 2048
+
 function new_bn()
     local bn = {
         d = new_ptr(),
@@ -27,6 +29,15 @@ function bn_copy(a, b)
     a.neg = b.neg
     a.top = b.top
     return a
+end
+function bn_dup(a)
+    local t
+    if a==nil then return nil end
+    bn_check_top(a)
+    t=bn_new()
+    bn_copy(t,a)
+    bn_check_top(t)
+    return t
 end
 
 function memset(ptr, num, words)
@@ -52,7 +63,7 @@ function hex2bn(hex)
     local bstr
     --print('bsize'..bsize..' len'..len)
     bn_expand(bn, blocks+1)
-    bn.top=blocks
+    bn.top=blocks+1
     local i=len
     while(i ~= ih) do
         k = k+1
@@ -940,6 +951,13 @@ end
 function bn_is_one(a)
     if bn_abs_is_word(a,1) and a.neg==0 then return 1 else return 0 end
 end
+function bn_is_word(a,w)
+    if bn_abs_is_word(a,w)==1 and (w==0 or a.neg==0) then
+        return 1 
+    else
+        return 0
+    end
+end
 
 function bn_abs_is_word(a, w)
     if (a.top==1 and a.d[0]==w) or (w==0 and a.top==0) then 
@@ -1275,7 +1293,7 @@ function RAND_bytes(buf,num)
     local words=math.ceil(num/BN_BYTES2)
     local byte=num%BN_BYTES2
     for i=1,words do
-        table.insert(buf, math.random(0,BN_MASK2))
+        table.insert(buf.d, math.random(0,BN_MASK2))
     end
     if byte~=0 then
         buf[words-1]=bit.band(buf[words-1], bit.blogic_rshift(BN_MASK2,BN_BYTES2-byte))
@@ -1284,15 +1302,17 @@ function RAND_bytes(buf,num)
 end
 function bnrand(rnd,bits,top,bottom)
     local buf=new_ptr()
-    local bit,bytes,mask, words,byte
+    local tbit,bytes,mask, words,byte
 
     bytes=math.floor((bits+7)/8)
     words=math.floor((bits+BN_BITS2-1)/BN_BITS2)
-    bit=(bits-1)%BN_BITS2
-    byte=bit%8
-    mask=bit.blshift(BN_MASK2, bit+1)
+    tbit=(bits-1)%BN_BITS2
+    byte=tbit%8
+    mask=bit.blshift(BN_MASK2, tbit+1)
 
     RAND_bytes(buf,bytes)
+    print('buf')
+    print(textutils.serialiseJSON(buf))
     local w1=words-1
     if top>=0 then
         if top~=0 then
@@ -1300,17 +1320,15 @@ function bnrand(rnd,bits,top,bottom)
                 buf[words-1]=1
                 buf[words-2]=bit.bor(buf[words-2],bit.blshift(0x80),byte*8)
             else
-                buf[words-1]=bit.bor(buf[words-1], bit.blshift(3,bit-1))
+                buf[words-1]=bit.bor(buf[words-1], bit.blshift(3,tbit-1))
             end
         else
-            buf[words-1]=bit.bor(buf[words-1], bit.blshift(1,bit))
+            buf[words-1]=bit.bor(buf[words-1], bit.blshift(1,tbit))
         end
-    else
-        buf[1]=bit.bor(tonumber(buf[1],16),bit.blshift(1,bit))
     end
     buf[w1]=bit.band(buf[w1],bit.bnot(mask))
     if bottom~=0 then
-        buf[bytes-1]=bit.bor(buf[bytes-1],1)
+        buf[0]=bit.bor(buf[0],1)
     end
     bn_expand(rnd,words)
     rnd.top=words
@@ -1480,6 +1498,14 @@ function bn_is_prime_int(w,checks,do_trial_division)
     end
     return ret
 end
+function bn_check_prime_int(w,checks,do_trial_division)
+    local min_checks=bn_mr_min_checks(bn_num_bits(w))
+    if checks<min_checks then
+        checks=min_checks
+    end
+    local r=bn_is_prime_int(w,checks,do_trial_division)
+    return r
+end
 function bn_check_prime(p)
     local r=bn_check_prime_int(p,0,1)
 end
@@ -1614,6 +1640,31 @@ function ossl_bn_rsa_fips186_4_derive_prime(Y,X,Xin,ri,r2,nlen,e)
     ret=1
     return ret
 end
+--RSA_CHECK
+function ossl_rsa_check_pminusq_diff(diff,p,q,nbits)
+    local bitlen=bit.blogic_rshift(nbits,1)-100
+    bn_sub(diff,p,q)
+    diff.neg=0
+    if bn_is_zero(diff)==1 then
+        return 0
+    end
+    bn_sub_word(diff,1)
+    if bn_num_bits(diff)>bitlen then return 1 else return 0 end
+end
+function ossl_rsa_check_public_exponent(e)
+    local bitlen
+    if bn_is_word(e,3)==1 then
+        return 1
+    end
+    bitlen=bn_num_bits(e)
+    print(textutils.serialiseJSON(e))
+    print("bitlen=",bitlen)
+    if bn_is_odd(e)==1 and bitlen>16 and bitlen<257 then
+        return 1 
+    else
+        return 0 
+    end
+end
 
 function ossl_rsa_fips186_4_gen_prob_primes(rsa,nbits,e)
     local ret,ok
@@ -1625,7 +1676,7 @@ function ossl_rsa_fips186_4_gen_prob_primes(rsa,nbits,e)
     local Xp,Xp1,Xp2
     local Xq,Xq1,Xq2
 
-    if nbits<RSA_FIPS1864_MIN_KEYGEN_SIZE then
+    if nbits < RSA_FIPS1864_MIN_KEYGEN_KEYSIZE then
         error("RSA bit too small")
     end
     if ossl_rsa_check_public_exponent(e)==0 then
@@ -1663,6 +1714,93 @@ function ossl_rsa_fips186_4_gen_prob_primes(rsa,nbits,e)
         --bn_clear(Xqo)
     end
     --bn_clear(tmp)
+    return ret
+end
+
+function ossl_rsa_sp800_56b_derive_params_from_pq(rsa,nbits,e)
+    local ret=-1
+    local p1,q1,lcm,p1q1,gcd
+    p1=bn_new()
+    q1=bn_new()
+    lcm=bn_new()
+    p1q1=bn_new()
+    gcd=bn_new()
+    ossl_rsa_get_lcm(rsa.p,rsa.q,lcm,gcd,p1,q1,p1q1)
+    print('get lcm')
+    --bn_free(e)
+    rsa.e=bn_dup(e)
+    --bn_clear_free(rsa.d)
+    rsa.d=bn_new()
+    bn_mod_inverse(rsa.d,e,lcm)
+    if bn_num_bits(rsa.d)<=bit.blogic_rshift(nbits,1) then
+        return 0
+    end
+    -- n=p*q
+    if rsa.n==nil then rsa.n=bn_new()end
+    bn_mul(rsa.n,rsa.p,rsa.q)
+    -- dP = d mod(p-1)
+    if rsa.dmp1==nil then rsa.dmp1=bn_new() end
+    bn_mod(rsa.dmp1,rsa.d,p1)
+    -- dQ = d mod(q-1)
+    if rsa.dmq1==nil then rsa.dmq1=bn_new() end
+    bn_mod(rsa.dmq1,rsa.d,q1)
+    --bn_free(rsa.iqmp)
+    rsa.iqmp=bn_new()
+    bn_mod_inverse(rsa.iqmp, rsa.q, rsa.p)
+    ret=1
+    ---ret==0 ...some error free process
+    return ret
+end
+function ossl_rsa_sp800_56b_pairwise_test(rsa)
+    local ret=0
+    local k,tmp
+
+    tmp=bn_new()
+    k=bn_new()
+    bn_set_word(k,2)
+    bn_mod_exp(tmp,k,rsa.e,rsa.n)
+    bn_mod_exp(tmp,tmp,rsa.d,rsa.n)
+    if bn_cmp(k,tmp)==0 then
+        ret=1
+    else
+        ret=0
+    end
+    if ret==0 then
+        print("rsa pairwise test failed")
+    end
+    return ret
+end
+function ossl_rsa_sp800_56b_generate_key(rsa,nbits,efixed)
+    local ret=0
+    local ok
+    local e=nil
+    if efixed==nil then 
+        --e=bn_new()
+        --bn_set_word(e,65537)
+        e=hex2bn('10001')
+    else
+        e=efixed
+    end
+
+    while true do
+        ossl_rsa_fips186_4_gen_prob_primes(rsa,nbits,e)
+        print("rsa gen prime ok")
+        ok=ossl_rsa_sp800_56b_derive_params_from_pq(rsa,nbits,e)
+        if ok<0 then
+            error('rsa derive prime failed')
+        end
+        if ok>0 then
+            break
+        end
+        print("rsa derive prime ok")
+    end
+    ret=ossl_rsa_sp800_56b_pairwise_test(rsa)
+    if ret==0 then
+        print("rsa pairwise test failed")
+    end
+    if efixed==nil then
+        --bn_free(e)
+    end
     return ret
 end
 
@@ -1739,8 +1877,16 @@ function exp_test()
     print("time elapsed: ",(os.epoch('utc')-start_epoch)/1000, " s")
 end
 
+function rsa_test()
+    local rsa={}
+    local nbits=2048
+    local efixed=nil
+    ossl_rsa_sp800_56b_generate_key(rsa,nbits,efixed)
+    print(textutils.serialiseJSON(rsa))
+end
 
-ok,err=xpcall(exp_test, function(err) print(err) end)
+
+ok,err=xpcall(rsa_test, function(err) print(err) end)
 
 if not ok then
     --printError(debug.traceback(err))
