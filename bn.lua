@@ -1,4 +1,7 @@
 ptr=require('ptr')
+prime_lib=require('bn_prime')
+local primes=prime_lib.primes
+
 _G.new_ptr=ptr.new_ptr
 BN_MASK2 = 0xffff
 BN_BITS2 = 16
@@ -313,6 +316,41 @@ function bn_ucmp(a, b)
             if t1 > t2 then return 1 else return -1 end
         end
         i=i-1
+    end
+    return 0
+end
+function bn_cmp(a,b)
+    local i
+    local gt,lt
+    local t1,t2
+    if a==nil or b==nil then
+        if a~=nil then return -1
+        elseif b~=nil then return 1
+        else return 0
+        end
+    end
+    if a.neg~=b.neg then
+        if a.neg==1 then return -1
+        else return 1 end
+    end
+    if a.neg==0 then
+        gt=1
+        lt=-1
+    else
+        gt=-1
+        lt=1
+    end
+    if a.top>b.top then
+        return gt
+    end
+    if a.top<b.top then
+        return lt
+    end
+    for i=a.top-1,0,-1 do
+        t1=a.d[i]
+        t2=b.d[i]
+        if t1>t2 then return gt end
+        if t1<t2 then return lt end
     end
     return 0
 end
@@ -1370,7 +1408,7 @@ function calc_trial_divisions(bits)
     if bits<= 4096 then return 1024 end
     error("TOO LARGE")
 end
-function bn_mr_min_check(bits) if bits>2048 then return 128 else return 64 end end
+function bn_mr_min_checks(bits) if bits>2048 then return 128 else return 64 end end
 
 
 function ossl_bn_miller_rabin_is_prime(w, iterations, enhanced, status)
