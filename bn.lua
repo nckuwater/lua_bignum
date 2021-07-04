@@ -2,6 +2,7 @@ ptr=require('ptr')
 _G.new_ptr=ptr.new_ptr
 BN_MASK2 = 0xffff
 BN_BITS2 = 16
+BN_BYTES2=math.floor(BN_BITS2/8)
 
 function new_bn()
     local bn = {
@@ -727,7 +728,6 @@ function bn_div_fixed_top(dv, rm, num, divisor)
         resp[0]=q
 
         -- loop
-        print("--loop end--")
         wnumtop=wnumtop-1
     end
     snum.neg=num.neg
@@ -883,19 +883,14 @@ function int_bn_mod_inverse(inn, a, n)--pnoinv=if no inverse exists
     bn_copy(B,a)
     bn_copy(A,n)
     A.neg=0
-    print("NNMOD")
-    print(bn2hex(A))
-    print(bn2hex(B))
-    --print(bn2hex(A))
+
     if B.neg==1 or bn_ucmp(B,A)>=0 then
         bn_nnmod(B,B,A)
     end
-    print("NNMOD-END")
     sign=-1
     local tmp
     while(bn_is_zero(B)==0)do
-        print("B")
-        print(bn2hex(B))
+
         bn_div(D,M,A,B)
         tmp=A
         A=B
@@ -950,6 +945,9 @@ function bn_abs_is_word(a, w)
     if (a.top==1 and a.d[0]==w) or (w==0 and a.top==0) then 
     return 1 else return 0 end
 end
+function bn_is_odd(a)
+    if a.top>0 and bit.band(a.d[0],1)==1 then return 1 else return 0 end
+end
 function bn_is_bit_set(a,n)
     local i,j
     bn_check_top(a)
@@ -959,7 +957,6 @@ function bn_is_bit_set(a,n)
     if a.top<=i then return 0 end
     return bit.band(bit.blogic_rshift(a.d[i],j),1)
 end
-
 
 function bn_set_bit(a, n)
     -- n is index of bit, not number of bit
@@ -1222,7 +1219,7 @@ function bn_mod_exp_mont(rr,a,p,m, in_mont)
     
     bn_to_mont_fixed_top(r, bn_value_one(), mont)
     local CONTINUE=false
-    print("LOOP start")
+    --print("LOOP start")
     while true do
         if bn_is_bit_set(p,wstart)==0 then
             if start==0 then
@@ -1273,6 +1270,182 @@ function bn_mod_exp_mont(rr,a,p,m, in_mont)
     return ret
 end
 
+function RAND_bytes(buf,num)
+    math.randomseed(os.epoch('utc'))
+    local words=math.ceil(num/BN_BYTES2)
+    local byte=num%BN_BYTES2
+    for i=1,words do
+        table.insert(buf, math.random(0,BN_MASK2))
+    end
+    if byte~=0 then
+        buf[words-1]=bit.band(buf[words-1], bit.blogic_rshift(BN_MASK2,BN_BYTES2-byte))
+    end
+    return 1
+end
+function bnrand(rnd,bits,top,bottom)
+    local buf=new_ptr()
+    local bit,bytes,mask, words,byte
+
+    bytes=math.floor((bits+7)/8)
+    words=math.floor((bits+BN_BITS2-1)/BN_BITS2)
+    bit=(bits-1)%BN_BITS2
+    byte=bit%8
+    mask=bit.blshift(BN_MASK2, bit+1)
+
+    RAND_bytes(buf,bytes)
+    local w1=words-1
+    if top>=0 then
+        if top~=0 then
+            if byte==0 then
+                buf[words-1]=1
+                buf[words-2]=bit.bor(buf[words-2],bit.blshift(0x80),byte*8)
+            else
+                buf[words-1]=bit.bor(buf[words-1], bit.blshift(3,bit-1))
+            end
+        else
+            buf[words-1]=bit.bor(buf[words-1], bit.blshift(1,bit))
+        end
+    else
+        buf[1]=bit.bor(tonumber(buf[1],16),bit.blshift(1,bit))
+    end
+    buf[w1]=bit.band(buf[w1],bit.bnot(mask))
+    if bottom~=0 then
+        buf[bytes-1]=bit.bor(buf[bytes-1],1)
+    end
+    bn_expand(rnd,words)
+    rnd.top=words
+    rnd.d=buf
+    return 1
+end
+function bnrand_range(r, range)
+    local n
+    local count=100
+
+    if range.neg==1 or bn_is_zero(range) then return 0 end
+
+    n=bn_num_bits(range)
+    if n==1 then
+        bn_zero(r)
+    else
+        bnrand(r,n,-1,0)
+        count=count-1
+        while(bn_cmp(r,range)>=0)do
+            bnrand(r,n,-1,0)
+            count=count-1
+            if count==0 then
+                error("bnrand_range TOO MANY ITERATIONS")
+                return 0
+            end
+        end
+    end
+    bn_check_top(r)
+    return 1
+end
+local bn_priv_rand_range_ex=bnrand_range
+local bn_priv_rand_ex=bnrand
+local bn_rand_ex=bnrand
+
+function calc_trial_divisions(bits)
+    if bits<= 512 then return 64 end
+    if bits<= 1024 then return 128 end
+    if bits<= 2048 then return 384 end
+    if bits<= 4096 then return 1024 end
+    error("TOO LARGE")
+end
+function bn_mr_min_check(bits) if bits>2048 then return 128 else return 64 end end
+
+
+function ossl_bn_miller_rabin_is_prime(w, iterations, enhanced, status)
+    local i,j,a,ret
+    ret=0
+    local g,w1,w3,x,m,z,b
+    local mont=nil
+
+    if bn_is_odd(w)==0 then return 0 end
+    g=bn_new()
+    w1=bn_new()
+    w3=bn_new()
+    x=bn_new()
+    m=bn_new()
+    z=bn_new()
+    b=bn_new()
+    bn_copy(w1,w)
+    bn_sub_word(w1,1)
+    bn_copy(w3,w)
+    bn_sub_word(w3,3)
+
+    if bn_is_zero(w3) or w3.neg==1 then error('miller rabin err') end
+
+    a=1
+    while(bn_is_bit_set(w1,a)==0)do a=a+1 end
+
+    bn_rshift(m,w1,a)
+
+    mont=bn_mont_ctx_new()
+    bn_mont_ctx_set(mont,w)
+    if iterations==0 then iterations=bn_mr_min_checks(bn_num_bits(w)) end
+    local GOTO_COMPOSITE, GOTO_OUTERLOOP, GOTO_ERR=false,false,false
+    for i=0, iterations-1 do
+        bn_priv_rand_range_ex(b,w3)
+        bn_add_word(b,2)
+        if enhanced~=0 then
+            bn_gcd(g,b,w)
+            if bn_is_one(g)==0 then 
+                status.status=0
+                ret=1
+                GOTO_ERR=true
+                break
+            end --composite
+        end
+
+        bn_mod_exp_mont(z,b,m,w,mont)
+        if bn_is_one(z)==1 or bn_cmp(z,w1)==0 then
+            status.status=1--probable prime
+            GOTO_OUTERLOOP=true
+        end
+        if not GOTO_OUTERLOOP then
+            for j=1,a-1 do
+                bn_copy(x,z)
+                bn_mod_mul(z,x,x,w)
+                if bn_cmp(z,w1)==0 then
+                    GOTO_OUTERLOOP=true
+                end
+                if bn_is_one(z)==1 then
+                    GOTO_COMPOSITE=true
+                end
+            end
+        end
+        if not (GOTO_OUTERLOOP or GOTO_COMPOSITE) then
+            bn_copy(x,z)
+            bn_mod_mul(z,x,x,w)
+            if bn_is_one(z)==1 then
+                GOTO_COMPOSITE=true
+            end
+            bn_copy(x,z)
+        end
+        -- composite:
+        if not GOTO_OUTERLOOP then
+            if enhanced~=0 then
+                bn_sub_word(x,1)
+                bn_gcd(g,x,w)
+                if bn_is_one(g)==1 then
+                    status.status=0
+                else
+                    status.status=0
+                end
+            else --not enhanced
+                status.status=1
+            end 
+            ret=1
+        end
+        -- outerloop:
+
+    end--end for
+    --err
+    return ret
+end
+
+
 function mul_test()
     local hex1 = "-aafffe"
     local d = hex2bn(hex1)
@@ -1321,6 +1494,7 @@ function div_test()
 end
 
 function exp_test()
+    local start_epoch=os.epoch('utc')
     local he='10001'
     local hd='10f22727e552e2c86ba06d7ed6de28326eef76d0128327cd64c5566368fdc1a9f740ad8dd221419a5550fc8c14b33fa9f058b9fa4044775aaf5c66a999a7da4d4fdb8141c25ee5294ea6a54331d045f25c9a5f7f47960acbae20fa27ab5669c80eaf235a1d0b1c22b8d750a191c0f0c9b3561aaa4934847101343920d84f24334d3af05fede0e355911c7db8b8de3bf435907c855c3d7eeede4f148df830b43dd360b43692239ac10e566f138fb4b30fb1af0603cfcf0cd8adf4349a0d0b93bf89804e7c2e24ca7615e51af66dccfdb71a1204e2107abbee4259f2cac917fafe3b029baf13c4dde7923c47ee3fec248390203a384b9eb773c154540c5196bce1'
     local hn='a709e2f84ac0e21eb0caa018cf7f697f774e96f8115fc2359e9cf60b1dd8d4048d974cdf8422bef6be3c162b04b916f7ea2133f0e3e4e0eee164859bd9c1e0ef0357c142f4f633b4add4aab86c8f8895cd33fbf4e024d9a3ad6be6267570b4a72d2c34354e0139e74ada665a16a2611490debb8e131a6cffc7ef25e74240803dd71a4fcd953c988111b0aa9bbc4c57024fc5e8c4462ad9049c7f1abed859c63455fa6d58b5cc34a3d3206ff74b9e96c336dbacf0cdd18ed0c66796ce00ab07f36b24cbe3342523fd8215a8e77f89e86a08db911f237459388dee642dae7cb2644a03e71ed5c6fa5077cf4090fafa556048b536b879a88f628698f0c7b420c4b7'
@@ -1342,6 +1516,7 @@ function exp_test()
     --bn_mod_exp_mont(plain,rs,d,n,nil)
     print('plain result:')
     print(bn2hex(plain))
+    print("time elapsed: ",(os.epoch('utc')-start_epoch)/1000, " s")
 end
 
 
