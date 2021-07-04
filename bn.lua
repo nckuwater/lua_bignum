@@ -1393,7 +1393,7 @@ function ossl_bn_miller_rabin_is_prime(w, iterations, enhanced, status)
             if bn_is_one(g)==0 then 
                 status.status=0
                 ret=1
-                GOTO_ERR=true
+                GOTO_ERR=true--maybe just break this for loop
                 break
             end --composite
         end
@@ -1438,13 +1438,233 @@ function ossl_bn_miller_rabin_is_prime(w, iterations, enhanced, status)
             end 
             ret=1
         end
+        GOTO_COMPOSITE=false
         -- outerloop:
-
+        GOTO_OUTERLOOP=false
     end--end for
     --err
     return ret
 end
 
+function bn_is_prime_int(w,checks,do_trial_division)
+    local i,status, ret
+    ret=-1
+    if bn_cmp(w,bn_value_one())<=0 then return 0 end
+
+    if bn_is_odd(w)==1 then
+        if bn_is_word(w,3)==1 then
+            return 1
+        end
+    else
+        return bn_is_word(w,2)
+    end
+    local trial_divisions, mod
+    if do_trial_division~=0 then
+        trial_divisions=calc_trial_divisions(bn_num_bits(w))
+        for i=1,trial_divisions-1 do
+            mod=bn_mod_word(w,primes[i])
+            if mod==BN_MASK2 then
+                return -1--ERR
+            end
+            if mod==0 then
+                return bn_is_word(w,primes[i])
+            end
+        end
+    end
+    status={status=0}
+    ret=ossl_bn_miller_rabin_is_prime(w,checks,0, status)
+    if status.status==1 then
+        ret=1
+    else
+        ret=0
+    end
+    return ret
+end
+function bn_check_prime(p)
+    local r=bn_check_prime_int(p,0,1)
+end
+function bn_rsa_fips186_4_aux_prime_min_size(nbits)
+    if nbits>=3072 then return 171 end
+    if nbits>=2048 then return 141 end
+    return 0
+end
+function bn_rsa_fips186_4_aux_prime_max_sum_size_for_prob_primes(nbits)
+    if nbits>=3072 then return 1518 end
+    if nbits>=2048 then return 1007 end
+    return 0
+end
+function bn_rsa_fips186_4_find_aux_prob_prime(Xp1,p1)
+    local ret=0
+    local i=0
+    bn_copy(p1,Xp1)
+    while true do
+        i=i+1
+        if bn_check_prime(p1)==1 then break end
+        bn_add_word(p1,2)
+    end
+    ret=1
+    return ret
+end
+--function ternary(cont,T,F) if cont then return T else return F end
+
+function ossl_bn_rsa_fips186_4_gen_prob_primes(p,Xpout,
+                                               p1,p2,Xp,Xp1,Xp2,nlen,e)
+    local ret=0
+    local p1i,p2i,Xp1i,Xp2i=nil,nil,nil,nil
+    local bitlen
+    if p1~=nil then p1i=p1 else p1i=bn_new() end
+    if p2~=nil then p2i=p2 else p2i=bn_new() end
+    if Xp1~=nil then Xp1i=Xp1 else Xp1i=bn_new() end
+    if Xp2~=nil then Xp2i=Xp2 else Xp2i=bn_new() end
+    bitlen=bn_rsa_fips186_4_aux_prime_min_size(nlen)
+    if bitlen==0 then error('bitlen==0') end
+
+    if Xp1==nil then
+        bn_priv_rand_ex(Xp1i,bitlen,0,1)
+    end
+    if Xp2==nil then
+        bn_priv_rand_ex(Xp2i,bitlen,0,1)
+    end
+
+    bn_rsa_fips186_4_find_aux_prob_prime(Xp1i,p1i)
+    bn_rsa_fips186_4_find_aux_prob_prime(Xp2i,p2i)
+
+    if bn_num_bits(p1i)+bn_num_bits(p2i)>=bn_rsa_fips186_4_aux_prime_max_sum_size_for_prob_primes(nlen)then
+        error('sum error')
+        return 0
+    end
+    print("start derive prime")
+    ossl_bn_rsa_fips186_4_derive_prime(p,Xpout,Xp,p1i,p2i,nlen,e)
+    return 1
+end
+function ossl_bn_rsa_fips186_4_derive_prime(Y,X,Xin,ri,r2,nlen,e)
+    if not(Y and X and r1 and r2 and e) then error("4 derive prime get nil")end
+    local ret=0
+    local i,imax
+    local bits=bit.blogic_rshift(nlen,1)
+    local tmp,R,r1r2x2,y1,r1x2
+    local base,range
+
+    base=bn_new()
+    range=bn_new()
+    R=bn_new()
+    tmp=bn_new()
+    r1r2x2=bn_new()
+    y1=bn_new()
+    r1x2=bn_new()
+
+    if Xin~=nil then
+        bn_copy(X,Xin)
+    end
+    if Xin==nil then
+        if bits<bn_num_bits(ossl_bn_inv_sqrt2) then
+            error('ERR')
+            return 0
+        end
+        bn_lshift(base,ossl_bn_inv_sqrt_2,bits-bn_num_bits(ossl_bn_inv_sqrt_2))
+        bn_lshift(range,bn_value_one(),bits)
+        bn_sub(range,range,base)
+    end
+    bn_lshift1(r1x2,r1)
+    bn_gcd(tmp,r1x2,r2)
+    if bn_is_one(tmp)==0 then return 0 end
+    bn_mod_inverse(R,r2,r1x2)
+    bn_mul(R,R,r2)
+    bn_mod_inverse(tmp,r1x2,r2)
+    bn_mul(tmp,tmp,r1x2)
+    bn_sub(R,R,tmp)
+    bn_mul(r1r2x2,r1x2,r2)
+
+    if R.neg==1 and bn_add(R,R,r1r2x2) then
+        error("ERR")
+        return 0
+    end
+    imax=5*bits
+    local GOTO_END=false
+    while true do
+        if Xin==nil then
+            bn_priv_rand_range_ex(X,range)
+            bn_add(X,X,base)
+        end
+        bn_mod_sub(Y,R,X,r1r2x2)
+        bn_add(Y,Y,X)
+        i=0
+        while true do
+            if bn_num_bits(Y)>bits then
+                if Xin==nil then
+                    break
+                else
+                    error("ERR")
+                end
+            end
+            bn_copy(y1,Y)
+            bn_sub_word(y1,1)
+            bn_gcd(tmp,y1,e)
+            if bn_is_one(tmp)==1 and bn_check_prime(Y) then
+                GOTO_END=true
+                break
+            end
+            i=i+1
+            if i>=imax then return 0 end
+            bn_add(Y,Y,r1r2x2)
+        end
+
+        if GOTO_END then break end
+    end
+    ret=1
+    return ret
+end
+
+function ossl_rsa_fips186_4_gen_prob_primes(rsa,nbits,e)
+    local ret,ok
+    ret=0
+    local Xpo,Xqo,tmp=nil,nil,nil
+    local p1,p2
+    local q1,q2
+    local Xpout,Xqout
+    local Xp,Xp1,Xp2
+    local Xq,Xq1,Xq2
+
+    if nbits<RSA_FIPS1864_MIN_KEYGEN_SIZE then
+        error("RSA bit too small")
+    end
+    if ossl_rsa_check_public_exponent(e)==0 then
+        error("ERR rsa public exponenet check error")
+    end
+
+    tmp=bn_new()
+    if Xpout~=nil then Xpo=Xpout else Xpo=bn_new() end
+    if Xqout~=nil then Xqo=Xqout else Xqo=bn_new() end
+
+    if rsa.p==nil then rsa.p=bn_new() end
+    if rsa.q==nil then rsa.q=bn_new() end
+    print("start gen p,Xp")
+    ossl_bn_rsa_fips186_4_gen_prob_primes(rsa.p, Xpo,p1,p2,Xp,Xp1,Xp2,
+                                          nbits, e)
+    print("p gened")
+    while true do
+        ossl_bn_rsa_fips186_4_gen_prob_primes(rsa.q, Xqo,q1,q2,Xq,Xq1,Xq2,
+                                              nbits,e)
+        ok=ossl_rsa_check_pminusq_diff(tmp,Xqo,Xqo,nbits)
+        if ok<0 then return 0 end
+        if ok~=0 then --ok==0 continue
+            ok=ossl_rsa_check_pminusq_diff(tmp,rsa.p,rsa.q,nbits)
+            if ok<0 then return 0 end
+            if ok~=0 then --ok==0 continue
+                break 
+            end
+        end
+    end
+    ret=1
+    if Xpo~=Xpout then
+        --bn_clear(Xpo)
+    end
+    if Xqo~=Xqout then
+        --bn_clear(Xqo)
+    end
+    --bn_clear(tmp)
+    return ret
+end
 
 function mul_test()
     local hex1 = "-aafffe"
