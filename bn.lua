@@ -1,13 +1,21 @@
 ptr=require('ptr')
 prime_lib=require('bn_prime')
-local primes=prime_lib.primes
+local primes=new_ptr(prime_lib.primes)
 
 _G.new_ptr=ptr.new_ptr
 BN_MASK2 = 0xffff
 BN_BITS2 = 16
+--BN_MASK2 = 0xffffffff
+--BN_BITS2 = 32
 BN_BYTES2=math.floor(BN_BITS2/8)
 
 local RSA_FIPS1864_MIN_KEYGEN_KEYSIZE = 2048
+
+local inv_sqrt_2_val={
+    0x8333,0x9916, 0xED17,0xAC85, 0x0893,0xBA84, 0x1D6F,0x60BA,
+    0x754A,0xBE9F, 0x597D,0x89B3, 0xF9DE,0x6484, 0xB504,0xF333
+}
+
 
 function new_bn()
     local bn = {
@@ -18,6 +26,13 @@ function new_bn()
     }
     return bn
 end
+
+local inv_sqrt_2_val_ptr=new_ptr(inv_sqrt_2_val)
+local ossl_bn_inv_sqrt_2=new_bn()
+ossl_bn_inv_sqrt_2.d=inv_sqrt_2_val_ptr
+ossl_bn_inv_sqrt_2.dmax=#inv_sqrt_2_val_ptr.d
+ossl_bn_inv_sqrt_2.top=#inv_sqrt_2_val_ptr.d
+
 function bn_new()
     return new_bn()
 end
@@ -103,6 +118,9 @@ function bn2hex(bn)
         end
     end
     return hex
+end
+function printbn(bn)
+    print(bn2hex(bn))
 end
 
 function bn_expand(bn, w)
@@ -412,7 +430,7 @@ function bn_sub(r, a, b)
     return ret
 end
 
-function bn_sub_word(a, w)
+function bn_sub_word_bad(a, w)
     local word=bn_new()
     bn_set_word(word,w)
     bn_sub(a,a,word)
@@ -680,6 +698,8 @@ function bn_div_fixed_top(dv, rm, num, divisor)
     bn_check_top(divisor)
     bn_check_top(dv)
     bn_check_top(rm)
+    bn_correct_top(num)
+    bn_correct_top(divisor)
 
     if dv==nil then
         res=bn_new()
@@ -764,12 +784,16 @@ function bn_div_fixed_top(dv, rm, num, divisor)
         end
         --print(bn2hex(tmp))
         l0=bn_add_words(wnum,wnum,tmp.d,div_n)
-        --wnumtop[0]=bit.band(wnumtop[0]+l0, BN_MASK2)
-        wnumtop[0]=wnumtop[0]+l0
+        wnumtop[0]=bit.band(wnumtop[0]+l0, BN_MASK2)
+        --wnumtop[0]=wnumtop[0]+l0
         --print(bn2hex(snum))
         if(wnumtop[0]~=0)then
             -- this number should be zero after this part of division
             -- otherwise something went wrong
+            print("snum")
+            printbn(snum)
+            print("sdiv")
+            printbn(sdiv)
             error('error *wnumtop~=0')
         end
 
@@ -1008,7 +1032,7 @@ function bn_is_bit_set(a,n)
     local i,j
     bn_check_top(a)
     if n<0 then return 0 end
-    i=math.floor(n,BN_BITS2)
+    i=math.floor(n/BN_BITS2)
     j=n%BN_BITS2
     if a.top<=i then return 0 end
     return bit.band(bit.blogic_rshift(a.d[i],j),1)
@@ -1062,6 +1086,91 @@ function bn_value_one()
     return const_one
 end
 
+function bn_mod_word(a,w)
+    local ret=0
+    local i
+    if w==0 then
+        return BN_MASK2
+    end
+    w=bit.band(w,BN_MASK2)
+    for i=a.top-1, 0, -1 do
+        ret=bit.bor(bit.blshift(ret,BN_BITS2),a.d[i])%w
+    end
+    return ret
+end
+
+function bn_add_word(a,w)
+    local l,i
+    w=bit.band(w,BN_MASK2)
+    if w==0 then return 1 end
+    if bn_is_zero(a)==1 then
+        return bn_set_word(a,w)
+    end
+    if a.neg==1 then
+        a.neg=0
+        i=bn_sub_word(a,w)
+        if bn_is_zero(a)==0 then
+            a.neg=bit.bnot(a.neg)
+        end
+        return i
+    end
+    --else
+    i=0
+    while w~=0 and i<a.top do
+        l=bit.band((a.d[i]+w),BN_MASK2)
+        a.d[i]=l
+        if w>l then w=1 else w=0 end
+        --loopend
+        i=i+1
+    end
+    if w==1 and i==a.top then
+        bn_expand(a,a.top+1)
+        a.top=a.top+1
+        a.d[i]=w
+    end
+    return 1
+end
+function bn_sub_word(a,w)
+    local i
+    w=bit.band(w,BN_MASK2)
+    if w==0 then return 1 end
+    if bn_is_zero(a)==1 then
+        i=bn_set_word(a,w)
+        if i~=0 then
+            a.neg=1
+        end
+        return i
+    end
+    if a.neg==1 then
+        a.neg=0
+        i=bn_add_word(a,w)
+        a.neg=1
+        return i
+    end
+    if a.top==1 and a.d[0]<w then
+        a.d[0]=w-a.d[0]
+        a.neg=1
+        return 1
+    end
+    i=0
+    while true do
+        if a.d[i]>=w then
+            a.d[i]=a.d[i]-w
+            break
+        else
+            a.d[i]=bit.band(a.d[i]-w)
+            i=i+1
+            w=1
+        end
+
+    end
+    if a.d[i]==0 and i==(a.top-1) then
+        a.top=a.top-1
+    end
+    return 1
+end
+
+
 ---- MONT ----
 function bn_consttime_swap(condition, a, b, nwords)
     local t, i
@@ -1114,16 +1223,16 @@ function bn_mont_ctx_set(mont, mod)
     bn_zero(R)
     
     bn_set_bit(R, mont.ri)
-    print("R")
-    print(bn2hex(mont.N))
+    --print("R")
+    --print(bn2hex(mont.N))
     bn_mod_inverse(Ri,R,mont.N) --ERR
-    print("EEE")
+    --print("EEE")
     bn_lshift(Ri,Ri,mont.ri)
     bn_sub_word(Ri, 1)
     -- Ni=(R*Ri-1)/N
     
     bn_div(mont.Ni, nil, Ri, mont.N)
-    print("EEE")
+    --print("EEE")
     bn_zero(mont.RR)
     bn_set_bit(mont.RR, mont.ri*2)
     bn_mod(mont.RR, mont.RR, mont.N)
@@ -1243,14 +1352,14 @@ function bn_mod_exp_mont(rr,a,p,m, in_mont)
     d=bn_new()
     r=bn_new()
     val[0]=bn_new()
-    print("START MONT set")
+    --print("START MONT set")
     if in_mont~=nil then
         mont=in_mont
     else
         mont=bn_mont_ctx_new()
         bn_mont_ctx_set(mont, m)
     end
-    print("MONT CTX set")
+    --print("MONT CTX set")
     if a.neg==1 or bn_ucmp(a,m)>=0 then
         bn_nnmod(val[0],a,m)
         aa=val[0]
@@ -1320,7 +1429,7 @@ function bn_mod_exp_mont(rr,a,p,m, in_mont)
         CONTINUE=false
         --::continue::
     end
-    print(bn2hex(r))
+    --print(bn2hex(r))
     bn_from_montgomery(rr,r,mont)
     ret=1
     return ret
@@ -1349,8 +1458,8 @@ function bnrand(rnd,bits,top,bottom)
     mask=bit.blshift(BN_MASK2, tbit+1)
 
     RAND_bytes(buf,bytes)
-    print('buf')
-    print(textutils.serialiseJSON(buf))
+    --print('buf')
+    --print(textutils.serialiseJSON(buf))
     local w1=words-1
     if top>=0 then
         if top~=0 then
@@ -1408,7 +1517,8 @@ function calc_trial_divisions(bits)
     if bits<= 4096 then return 1024 end
     error("TOO LARGE")
 end
-function bn_mr_min_checks(bits) if bits>2048 then return 128 else return 64 end end
+--function bn_mr_min_checks(bits) if bits>2048 then return 128 else return 64 end end
+function bn_mr_min_checks(bits) if bits>2048 then return 10 else return 10 end end
 
 
 function ossl_bn_miller_rabin_is_prime(w, iterations, enhanced, status)
@@ -1429,8 +1539,9 @@ function ossl_bn_miller_rabin_is_prime(w, iterations, enhanced, status)
     bn_sub_word(w1,1)
     bn_copy(w3,w)
     bn_sub_word(w3,3)
-
-    if bn_is_zero(w3) or w3.neg==1 then error('miller rabin err') end
+    print('w:')
+    print(bn2hex(w))
+    if bn_is_zero(w3)==1 or w3.neg==1 then error('miller rabin err') end
 
     a=1
     while(bn_is_bit_set(w1,a)==0)do a=a+1 end
@@ -1448,15 +1559,14 @@ function ossl_bn_miller_rabin_is_prime(w, iterations, enhanced, status)
             bn_gcd(g,b,w)
             if bn_is_one(g)==0 then 
                 status.status=0
-                ret=1
                 GOTO_ERR=true--maybe just break this for loop
+                ret=1
                 break
             end --composite
         end
 
         bn_mod_exp_mont(z,b,m,w,mont)
         if bn_is_one(z)==1 or bn_cmp(z,w1)==0 then
-            status.status=1--probable prime
             GOTO_OUTERLOOP=true
         end
         if not GOTO_OUTERLOOP then
@@ -1465,9 +1575,11 @@ function ossl_bn_miller_rabin_is_prime(w, iterations, enhanced, status)
                 bn_mod_mul(z,x,x,w)
                 if bn_cmp(z,w1)==0 then
                     GOTO_OUTERLOOP=true
+                    break
                 end
-                if bn_is_one(z)==1 then
+                if bn_is_one(z)~=0 then
                     GOTO_COMPOSITE=true
+                    break
                 end
             end
         end
@@ -1477,27 +1589,35 @@ function ossl_bn_miller_rabin_is_prime(w, iterations, enhanced, status)
             if bn_is_one(z)==1 then
                 GOTO_COMPOSITE=true
             end
-            bn_copy(x,z)
+            if not GOTO_COMPOSITE then
+                bn_copy(x,z)
+            end
         end
         -- composite:
         if not GOTO_OUTERLOOP then
             if enhanced~=0 then
                 bn_sub_word(x,1)
                 bn_gcd(g,x,w)
-                if bn_is_one(g)==1 then
+                if bn_is_one(g)~=0 then
                     status.status=0
                 else
                     status.status=0
                 end
             else --not enhanced
-                status.status=1
+                status.status=0
             end 
             ret=1
+            GOTO_ERR=true
+            break
         end
         GOTO_COMPOSITE=false
         -- outerloop:
         GOTO_OUTERLOOP=false
     end--end for
+    if not GOTO_ERR then
+        status.status=1
+        ret=1
+    end
     --err
     return ret
 end
@@ -1520,6 +1640,7 @@ function bn_is_prime_int(w,checks,do_trial_division)
         for i=1,trial_divisions-1 do
             mod=bn_mod_word(w,primes[i])
             if mod==BN_MASK2 then
+                error('mod error')
                 return -1--ERR
             end
             if mod==0 then
@@ -1527,8 +1648,10 @@ function bn_is_prime_int(w,checks,do_trial_division)
             end
         end
     end
-    status={status=0}
+    status={status=nil}
+    print("ml")
     ret=ossl_bn_miller_rabin_is_prime(w,checks,0, status)
+    print("mlend", textutils.serialiseJSON(status))
     if status.status==1 then
         ret=1
     else
@@ -1546,6 +1669,7 @@ function bn_check_prime_int(w,checks,do_trial_division)
 end
 function bn_check_prime(p)
     local r=bn_check_prime_int(p,0,1)
+    return r
 end
 function bn_rsa_fips186_4_aux_prime_min_size(nbits)
     if nbits>=3072 then return 171 end
@@ -1582,17 +1706,18 @@ function ossl_bn_rsa_fips186_4_gen_prob_primes(p,Xpout,
     if Xp2~=nil then Xp2i=Xp2 else Xp2i=bn_new() end
     bitlen=bn_rsa_fips186_4_aux_prime_min_size(nlen)
     if bitlen==0 then error('bitlen==0') end
-
+    print("XP1 go")
     if Xp1==nil then
         bn_priv_rand_ex(Xp1i,bitlen,0,1)
     end
+    print('XP1 gened')
     if Xp2==nil then
         bn_priv_rand_ex(Xp2i,bitlen,0,1)
     end
 
     bn_rsa_fips186_4_find_aux_prob_prime(Xp1i,p1i)
     bn_rsa_fips186_4_find_aux_prob_prime(Xp2i,p2i)
-
+    print("two aux found")
     if bn_num_bits(p1i)+bn_num_bits(p2i)>=bn_rsa_fips186_4_aux_prime_max_sum_size_for_prob_primes(nlen)then
         error('sum error')
         return 0
@@ -1602,7 +1727,9 @@ function ossl_bn_rsa_fips186_4_gen_prob_primes(p,Xpout,
     return 1
 end
 function ossl_bn_rsa_fips186_4_derive_prime(Y,X,Xin,ri,r2,nlen,e)
-    if not(Y and X and r1 and r2 and e) then error("4 derive prime get nil")end
+    if (Y==nil or X==nil or r1==nil or r2==nil or e==nil) then 
+        error("4 derive prime get nil")
+    end
     local ret=0
     local i,imax
     local bits=bit.blogic_rshift(nlen,1)
@@ -1922,7 +2049,14 @@ function rsa_test()
     ossl_rsa_sp800_56b_generate_key(rsa,nbits,efixed)
     print(textutils.serialiseJSON(rsa))
 end
-
+function prime_test()
+    local ph='10001'
+    local pbn=hex2bn(ph)
+    print(textutils.serialiseJSON(pbn))
+    local status={status=0}
+    local res=ossl_bn_miller_rabin_is_prime(pbn,0,0, status)
+    print(textutils.serialiseJSON(status))
+end
 
 ok,err=xpcall(rsa_test, function(err) print(err) end)
 
