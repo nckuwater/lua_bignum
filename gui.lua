@@ -20,6 +20,9 @@ function nilcall(f, ...)
 end
 
 function getabspos(widget)
+    --[[
+        Get the absolute position of a widget
+    ]]--
     local parent=widget.parent
     local ox,oy=widget.x,widget.y
     while parent ~= nil do
@@ -31,19 +34,31 @@ function getabspos(widget)
 end
 
 function getposwidget(widget, x, y, is_dif_win)
-    -- this x, y is base on parent coordinate
-    -- first, check if child is valid
+    -- this x, y is base on parent coordinate.
+    -- first, check if child is valid.
+    -- Considering the event sender may duplicate the event to another window's widget
+    -- and cause a same function be called more than once by a single signal
+    -- this function will return a bool(is_dif_win), true if this traversal did not visit a window widget.
+
+    if widget.is_window then 
+        is_dif_win=true 
+    else 
+        is_dif_win=is_dif_win or false 
+    end
+
+    if not containpos(widget,x,y)then
+        return nil, is_dif_win
+    end
+
     local i,w,res
-    -- check if traverse window.
-    is_dif_win = is_dif_win or false
-    if widget.is_window then is_dif_win = true end
+    local res_is_dif_win
 
     if widget.child ~= nil then
         for i,child in pairs(widget.child) do
-            res, is_dif_win = getposwidget(child, x-widget.x+1, y-widget.y+1, is_dif_win)
+            res, res_is_dif_win = getposwidget(child, x-widget.x+1, y-widget.y+1, is_dif_win)
             if res ~= nil then
                 -- child or its child is the target
-                return res, is_dif_win
+                return res, res_is_dif_win
             end
         end
     end
@@ -54,30 +69,37 @@ function getposwidget(widget, x, y, is_dif_win)
     return nil, is_dif_win
 end
 
-function getposfocusablewidget(widget, x, y)
+function getposfocusablewidget(widget, x, y, is_dif_win)
     -- this is try to find the lowest clicked focusable widget
     -- this x, y is base on parent coordinate
     -- first, check if child is valid
-    local i,w,res, is_dif_win
+
+    if widget.is_window then 
+        is_dif_win=true 
+    else 
+        is_dif_win=is_dif_win or false 
+    end
+
+    if not containpos(widget,x,y) then
+        return nil, is_dif_win
+    end
+    
+    local i,w,res, res_is_dif_win
 
     if widget.child ~= nil then
         for i,child in pairs(widget.child) do
-            res,is_dif_win = getposwidget(child, x-widget.x+1, y-widget.y+1)
+            res, res_is_dif_win = getposwidget(child, x-widget.x+1, y-widget.y+1, is_dif_win)
             if res ~= nil and res.focusable==true then
                 -- child or its child is the target
-                return res,is_dif_win
+                return res,res_is_dif_win
             end
         end
     end
     -- second, if no child valid, check self
     if containpos(widget, x, y) and widget.focusable==true then
-        if widget.is_window then 
-            return widget, true
-        else
-            return widget, false
-        end
+        return widget,is_dif_win
     end
-    return nil, false
+    return nil, is_dif_win
 end
 
 function getwinposwidget(win, x, y) 
@@ -87,11 +109,11 @@ function getwinposwidget(win, x, y)
     y = y-win.y+1
     if win.child~=nil then
         for i,w in pairs(win.child) do
-            res,is_dif_win = getposwidget(w, x, y)
+            res, is_dif_win = getposwidget(w, x, y)
             if res ~= nil then break end
         end
         for i,w in pairs(win.child) do
-            focus_res,is_dif_win_focus = getposfocusablewidget(w, x, y)
+            focus_res, is_dif_win_focus = getposfocusablewidget(w, x, y)
             if focus_res ~= nil then break end
         end
     end
@@ -102,26 +124,33 @@ function getwinposwidget(win, x, y)
 end
 
 function renderwidget(widget)
-    --x,y is the parent coordinate
-    if widget.window ~= nil then
-        if widget.bc == nil then
-            widget.window.setBackgroundColor(colors.blue)
-        else
-            widget.window.setBackgroundColor(widget.bc)
+    if type(widget.render)=='function' then
+        -- widget custom render function
+        widget.render()
+    else
+        -- Default way to render widget
+        -- Simple rendering
+        if widget.window ~= nil then
+            if widget.bc == nil then
+                widget.window.setBackgroundColor(colors.blue)
+            else
+                widget.window.setBackgroundColor(widget.bc)
+            end
+            widget.window.setTextColor(widget.tc or colors.black)
+            widget.window.clear()
+            widget.window.redraw()
+            widget.window.setCursorPos(1,1)
+            if widget.text~=nil then widget.window.write(widget.text) end
+            if widget.img~=nil then 
+                local absx, absy=getabspos(widget)
+                paintutils.drawImage(widget.img, absx, absy)
+            end
         end
-        widget.window.setTextColor(widget.tc or colors.black)
-        widget.window.clear()
-        widget.window.redraw()
-        widget.window.setCursorPos(1,1)
-        if widget.text~=nil then widget.window.write(widget.text) end
-        if widget.img~=nil then 
-            local absx, absy=getabspos(widget)
-            paintutils.drawImage(widget.img, absx, absy)
-        end
-    end
-    if widget.child ~= nil then
-        for i,child in pairs(widget.child) do
-            renderwidget(child)
+        -- Render children
+        if widget.child ~= nil then
+            for i,child in pairs(widget.child) do
+                renderwidget(child)
+            end
         end
     end
 end
@@ -243,6 +272,10 @@ function handlewindowevent(win, event,e1,e2,e3)
     end
 
 
+end
+
+function eventpuller(win)
+    
 end
 
 function mainloop(win)

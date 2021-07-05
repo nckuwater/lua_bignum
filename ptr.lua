@@ -31,7 +31,7 @@ end
 function new_ptr(tab, offset)
     local ptr
     if offset==nil then offset=0 end
-    
+
     if tab==nil then
         ptr={d={}, index=1+offset}
     elseif tab.index~=nil then
@@ -58,7 +58,6 @@ function test()
     print(ptr2[1])
     
 end
-
 
 
 return {new_ptr=new_ptr}

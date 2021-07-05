@@ -591,6 +591,7 @@ function bn_lshift_fixed_top(r,a,n)
             m=bit.blshift(l,lb)
             l=f[i-1]
             t[i]=bit.band(BN_MASK2, bit.bor(m, bit.band(BN_MASK2, bit.blogic_rshift(l, rb))))
+
         end
         t[0]=bit.band(BN_MASK2, bit.blshift(l, lb))
     else
@@ -657,6 +658,67 @@ function bn_rshift(r,a,n)
     bn_check_top(r)
     return ret
 end
+function bn_lshift1(r,a)
+    local ap,rp,t,c
+    local i
+    if r~= a then
+        r.neg=a.neg
+        bn_expand(r,a.top+1)
+        r.top=a.top
+    else
+        bn_expand(r,a.top+1)
+    end
+    ap=new_ptr(a.d)
+    rp=new_ptr(r.d)
+    c=0
+    for i=0,a.top-1 do
+        t=ap[0]
+        ap=ap+1
+        rp[0]=bit.band(bit.bor(bit.blshift(t,1),c),BN_MASK2)
+        rp=rp+1
+        c=bit.blogic_rshift(t,(BN_BITS2-1))
+    end
+    rp[0]=c
+    r.top=r.top+c
+    return 1
+end
+function bn_rshift1(r,a)
+    local ap,rp,t,c
+    local i
+    if bn_is_zero(a)~=0 then
+        bn_zero(r)
+        return 1
+    end
+    i=a.top
+    ap=new_ptr(a.d)
+    if a~=r then
+        bn_expand(r,i)
+        r.neg=a.neg
+    end
+    rp=new_ptr(r.d)
+    r.top=i
+    i=i-1
+    --print(textutils.serialiseJSON(a))
+    t=ap[i]
+    if t==nil then
+        printError('t is nil')
+        print(textutils.serialiseJSON(a))
+    end
+    rp[i]=bit.blogic_rshift(t,1)
+    c=bit.blshift(t,BN_BITS2-1)
+    if t==1 then r.top=r.top-1 else r.top=r.top-0 end
+    while i>0 do
+        i=i-1
+        t=ap[i]
+        rp[i]=bit.bor(bit.band(bit.blogic_rshift(t,1),BN_MASK2),c)
+        c=bit.blshift(t,BN_BITS2-1)
+    end
+    if r.top==0 then
+        r.neg=0
+    end
+    return 1
+end
+
 
 
 function bn_div_3_words(m,d1,d0)
@@ -859,13 +921,16 @@ function bn_mod_mul(r,a,b,m)
     ret=1
     return ret
 end
+function neg(num)
+    return bit.bnot(num)+1
+end
 
 function bn_gcd(r,in_a, in_b)-- not test yet
     local g,temp
     temp=nil
     local mask=0
     local i,j,top,rlen,glen,m
-    local bit,delta,cond,shifts,ret=1,1,0,0,0
+    local tbit,delta,cond,shifts,ret=1,1,0,0,0
     if bn_is_zero(in_b)==1 then
         ret=bn_copy(r,in_a)
         r.neg=0
@@ -875,7 +940,10 @@ function bn_gcd(r,in_a, in_b)-- not test yet
         r.neg=0
         return ret
     end
-
+    --[[print('ina')
+    print(textutils.serialiseJSON(in_a))
+    print('inb')
+    print(textutils.serialiseJSON(in_b))]]--
     bn_check_top(in_a)
     bn_check_top(in_b)
 
@@ -889,12 +957,13 @@ function bn_gcd(r,in_a, in_b)-- not test yet
     while(i<r.dmax and i<g.dmax) do
         mask=bit.bnot(bit.bor(r.d[i],g.d[i]))
         for j=0,BN_BITS2-1 do
-            bit=bit.band(mask)
-            shifts=shifts+bit
+            tbit=bit.band(tbit,mask)
+            shifts=shifts+tbit
             mask=bit.blogic_rshift(mask,1)
         end
 
         --loop end
+        
         i=i+1
     end
     bn_rshift(r,r,shifts)
@@ -910,6 +979,7 @@ function bn_gcd(r,in_a, in_b)-- not test yet
     if rlen>=glen then m=4+3*rlen else m=4+3*glen end
 
     for i=0, m-1 do
+        --print(i)
         cond=bit.band(bit.blogic_rshift(-delta,8*2-1), g.d[0])
         cond=bit.band(cond, 1)
         cond=bit.band(cond,bit.blogic_rshift(bit.bnot(g.top-1), 2*8-1))
@@ -918,14 +988,28 @@ function bn_gcd(r,in_a, in_b)-- not test yet
         bn_consttime_swap(cond,r,g,top)
         delta=delta+1
         bn_add(temp,g,r)
+
+        --print('temp')
+        --print(textutils.serialiseJSON(temp))
+        --print(textutils.serialiseJSON(g))
+
         local arg1=bit.blogic_rshift(bit.bnot(g.top-1),(2*8-1))
         arg1=bit.band(arg1,bit.band(g.d[0],1))
         bn_consttime_swap(arg1,g,temp,top)
+
+        --print(textutils.serialiseJSON(temp))
+        --print(textutils.serialiseJSON(g))
+        --print('swap')
+
         bn_rshift1(g,g)
     end
+    print("endloop shifts=",shifts)
     r.neg=0
     bn_lshift(r,r,shifts)
+    print('shifted')
+    print(textutils.serialiseJSON(r))
     bn_rshift1(r,r)
+    
     ret=1
     return ret
 end
@@ -1011,7 +1095,7 @@ function bn_is_zero(a)
 end
 
 function bn_is_one(a)
-    if bn_abs_is_word(a,1) and a.neg==0 then return 1 else return 0 end
+    if bn_abs_is_word(a,1)==1 and a.neg==0 then return 1 else return 0 end
 end
 function bn_is_word(a,w)
     if bn_abs_is_word(a,w)==1 and (w==0 or a.neg==0) then
@@ -1022,6 +1106,7 @@ function bn_is_word(a,w)
 end
 
 function bn_abs_is_word(a, w)
+    bn_correct_top(a)
     if (a.top==1 and a.d[0]==w) or (w==0 and a.top==0) then 
     return 1 else return 0 end
 end
@@ -1169,14 +1254,33 @@ function bn_sub_word(a,w)
     end
     return 1
 end
-
+function bitstr(num)
+    local bitstr=''
+    for i=1,32 do
+        if bit.band(num, 0x80000000)==0 then
+            bitstr=bitstr..'0'
+        else
+            bitstr=bitstr..'1'
+        end
+        if i%8==0 and i~=32 then
+            bitstr=bitstr..' '
+        end
+        num=bit.blshift(num,1)
+    end
+    --print(bitstr)
+    return bitstr
+end
 
 ---- MONT ----
 function bn_consttime_swap(condition, a, b, nwords)
     local t, i
     if(a==b) then return end
 
-    condition=(bit.blogic_rshift(bit.band(bit.bnot(condition),(condition-1)),(BN_BITS2-1)))-1
+    condition=(bit.blogic_rshift(bit.band(bit.bnot(condition),(condition-1)),(BN_BITS2-1)))
+    if condition==0 then
+        condition=BN_MASK2
+    end
+    --print('condition:',bitstr(condition))
     t=bit.band(bit.bxor(a.top, b.top), condition)
     a.top=bit.bxor(a.top,t)
     b.top=bit.bxor(b.top,t)
@@ -1185,8 +1289,8 @@ function bn_consttime_swap(condition, a, b, nwords)
     b.neg=bit.bxor(b.neg,t)
     for i=0, nwords-1 do
         t=bit.band(bit.bxor(a.d[i],b.d[i]), condition)
-        a.d[i]=bit.bxor(a.d[i],t)
-        b.d[i]=bit.bxor(b.d[i],t)
+        a.d[i]=bit.band(bit.bxor(a.d[i],t),BN_MASK2)
+        b.d[i]=bit.band(bit.bxor(b.d[i],t),BN_MASK2)
     end
 end
 
@@ -1517,8 +1621,8 @@ function calc_trial_divisions(bits)
     if bits<= 4096 then return 1024 end
     error("TOO LARGE")
 end
---function bn_mr_min_checks(bits) if bits>2048 then return 128 else return 64 end end
-function bn_mr_min_checks(bits) if bits>2048 then return 10 else return 10 end end
+function bn_mr_min_checks(bits) if bits>2048 then return 128 else return 64 end end
+--function bn_mr_min_checks(bits) if bits>2048 then return 10 else return 10 end end
 
 
 function ossl_bn_miller_rabin_is_prime(w, iterations, enhanced, status)
@@ -1553,6 +1657,7 @@ function ossl_bn_miller_rabin_is_prime(w, iterations, enhanced, status)
     if iterations==0 then iterations=bn_mr_min_checks(bn_num_bits(w)) end
     local GOTO_COMPOSITE, GOTO_OUTERLOOP, GOTO_ERR=false,false,false
     for i=0, iterations-1 do
+        sleep(0.0000001)
         bn_priv_rand_range_ex(b,w3)
         bn_add_word(b,2)
         if enhanced~=0 then
@@ -1726,7 +1831,7 @@ function ossl_bn_rsa_fips186_4_gen_prob_primes(p,Xpout,
     ossl_bn_rsa_fips186_4_derive_prime(p,Xpout,Xp,p1i,p2i,nlen,e)
     return 1
 end
-function ossl_bn_rsa_fips186_4_derive_prime(Y,X,Xin,ri,r2,nlen,e)
+function ossl_bn_rsa_fips186_4_derive_prime(Y,X,Xin,r1,r2,nlen,e)
     if (Y==nil or X==nil or r1==nil or r2==nil or e==nil) then 
         error("4 derive prime get nil")
     end
@@ -1748,20 +1853,26 @@ function ossl_bn_rsa_fips186_4_derive_prime(Y,X,Xin,ri,r2,nlen,e)
         bn_copy(X,Xin)
     end
     if Xin==nil then
-        if bits<bn_num_bits(ossl_bn_inv_sqrt2) then
+        print("NUMING inv")
+        if bits<bn_num_bits(ossl_bn_inv_sqrt_2) then
             error('ERR')
             return 0
         end
+        print("NUMING inv")
         bn_lshift(base,ossl_bn_inv_sqrt_2,bits-bn_num_bits(ossl_bn_inv_sqrt_2))
         bn_lshift(range,bn_value_one(),bits)
         bn_sub(range,range,base)
     end
     bn_lshift1(r1x2,r1)
+    print("Gcd")
     bn_gcd(tmp,r1x2,r2)
+    print("Gcdend")
     if bn_is_one(tmp)==0 then return 0 end
+    print("modinv")
     bn_mod_inverse(R,r2,r1x2)
     bn_mul(R,R,r2)
     bn_mod_inverse(tmp,r1x2,r2)
+    print("modinvend")
     bn_mul(tmp,tmp,r1x2)
     bn_sub(R,R,tmp)
     bn_mul(r1r2x2,r1x2,r2)
@@ -1770,9 +1881,11 @@ function ossl_bn_rsa_fips186_4_derive_prime(Y,X,Xin,ri,r2,nlen,e)
         error("ERR")
         return 0
     end
+    print("Lstart")
     imax=5*bits
     local GOTO_END=false
     while true do
+        sleep(0.000001)
         if Xin==nil then
             bn_priv_rand_range_ex(X,range)
             bn_add(X,X,base)
@@ -1781,6 +1894,7 @@ function ossl_bn_rsa_fips186_4_derive_prime(Y,X,Xin,ri,r2,nlen,e)
         bn_add(Y,Y,X)
         i=0
         while true do
+            sleep(0.000001)
             if bn_num_bits(Y)>bits then
                 if Xin==nil then
                     break
@@ -1791,17 +1905,19 @@ function ossl_bn_rsa_fips186_4_derive_prime(Y,X,Xin,ri,r2,nlen,e)
             bn_copy(y1,Y)
             bn_sub_word(y1,1)
             bn_gcd(tmp,y1,e)
-            if bn_is_one(tmp)==1 and bn_check_prime(Y) then
+            if bn_is_one(tmp)~=0 and bn_check_prime(Y)==1 then
                 GOTO_END=true
                 break
             end
             i=i+1
-            if i>=imax then return 0 end
+            if i>=imax then error('i>=imax') end
             bn_add(Y,Y,r1r2x2)
+            
         end
-
+        
         if GOTO_END then break end
     end
+    print("Lend")
     ret=1
     return ret
 end
