@@ -15,8 +15,9 @@ end
 function nilcall(f, ...)
     local args={...}
     if f~=nil then
-        f(table.unpack(args))
+        return f(table.unpack(args))
     end
+    return nil
 end
 
 function getabspos(widget)
@@ -109,21 +110,25 @@ function getposwidget(widget, x, y)
     -- and cause a same function be called more than once by a single signal
     -- this function will return a bool(is_dif_win), true if this traversal did not visit a window widget.
 
-    if widget.is_window and containpos(widget,x,y)  then 
-        return widget, true
+    if widget.is_window then
+        -- widget is window, don't go deep more
+        if containpos(widget,x,y)  then 
+            return widget, true
+        end
+        return nil,nil
     end
 
     local i,w,res,cx,cy
-    local res_is_dif_win
+    local res_is_win
     cx=x-widget.x+1
     cy=y-widget.h+1
 
     if widget.child ~= nil then
         for i,child in pairs(widget.child) do
-            res, res_is_dif_win = getposwidget(child, cx, cy)
+            res, res_is_win = getposwidget(child, cx, cy)
             if res ~= nil then
                 -- child or its child is the target
-                return res, res_is_dif_win
+                return res, res_is_win
             end
         end
     end
@@ -134,26 +139,30 @@ function getposwidget(widget, x, y)
     return nil, nil
 end
 
-function getposfocusablewidget(widget, x, y, is_dif_win)
+function getposfocusablewidget(widget, x, y)
     -- this is try to find the lowest clicked focusable widget
     -- this x, y is base on parent coordinate
     -- first, check if child is valid
 
-    if widget.is_window and containpos(widget,x,y) and widget.IsFocusable  then 
-        return widget, true
+    if widget.is_window then
+        -- widget is window, don't go deep more
+        if containpos(widget,x,y) and widget.IsFocusable  then 
+            return widget, true
+        end
+        return nil,nil
     end
 
     local i,w,res, cx,cy
-    local res_is_dif_win
+    local res_is_win
     cx=x-widget.x+1
     cy=y-widget.h+1
 
     if widget.child ~= nil then
         for i,child in pairs(widget.child) do
-            res, res_is_dif_win = getposwidget(child, cx, cy)
+            res, res_is_win = getposwidget(child, cx, cy)
             if res ~= nil then
                 -- child or its child is the target
-                return res, res_is_dif_win
+                return res, res_is_win
             end
         end
     end
@@ -165,29 +174,38 @@ function getposfocusablewidget(widget, x, y, is_dif_win)
 end
 
 function getwinposwidget(win, x, y) 
-    local res, focus_res=nil,nil
-    local is_dif_win, is_dif_win_focus
-    x = x-win.x+1
-    y = y-win.y+1
+    --[[
+        Called by window, this is the initial function to recursions.
+    ]]--
+    local obj, focus_obj=nil,nil
+    local is_obj_win, is_focus_obj_win
+    local cx = x-win.x+1
+    local cy = y-win.y+1
     if win.child~=nil then
         for i,w in pairs(win.child) do
-            res, is_dif_win = getposwidget(w, x, y)
-            if res ~= nil then break end
+            obj, is_obj_win = getposwidget(w, cx, cy)
+            if obj ~= nil then break end
         end
         for i,w in pairs(win.child) do
-            focus_res, is_dif_win_focus = getposfocusablewidget(w, x, y)
-            if focus_res ~= nil then break end
+            focus_obj, is_focus_obj_win = getposfocusablewidget(w, cx, cy)
+            if focus_obj ~= nil then break end
         end
     end
-    if res==nil and containpos(win, x,y) then
-        res=win
+    if containpos(win,x,y) then
+        if obj==nil then
+            obj=win
+        end
+        if focus_obj==nil and win.IsFocusable then
+            focus_obj=win
+        end
     end
-    return res, focus_res, is_dif_win, is_dif_win_focus
+    return obj, focus_obj, is_obj_win, is_focus_obj_win
 end
 
 function renderwidget(widget)
     if type(widget.render)=='function' then
         -- widget custom render function
+        -- make user can define their own render stuff
         widget.render()
     else
         -- Default way to render widget
@@ -217,51 +235,138 @@ function renderwidget(widget)
     end
 end
 
-function handle_mouse_click(object, e,e1,e2,e3)
-    --[[
-        widget may be window
-        when mouse clicked, each win should handle separately,
-        if click traverse on a widget, just keep going to search its chlid
-        if click traverse on a window, stop and make it focus if IsFocusable, and send this event to its EventHandler(e,e1,e2,e3)
-
-        return clicked_object,
-    ]]--
-    if object.is_window==true then
-        nilcall(object.OnClick,e,e1,e2,e3)
-    else
-        local cx,cy=e2-object.w+1, e3-object.h+1
-        if object.child~=nil then
-            for i,child in pairs(object.child) do
-                if containpos(child, cx,cy) then
-                    handle_mouse_click(child, cx,cy)
-                    return 
-                end
-                -- no child clicked, this object is the clicked object
-                nilcall(object.OnClick,e,e1,e2,e3)
+function MouseEventHandler(win, event,e1,e2,e3)
+    -- handle the event to a window and its subwindows
+    if event == 'mouse_click' then
+        win.clicked_widget, win.clicked_focusable_widget = getwinposwidget(win, e2, e3)
+        win.prev_drag_widget = win.clicked_widget
+        -- update focusing widget
+        --[[if win.clicked_focusable_widget~=nil then
+            win.focusing_widget = win.clicked_focusable_widget
+        else
+            win.focusing_widget = win
+        end]]--
+        if win.focusing_widget~=win.clicked_focusable_widget then
+            if win.focusing_widget~=nil then
+                nilcall(win.focusing_widget.OnBlur, event,e1,e2,e3)
             end
+            if win.clicked_focusable_widget~=nil then
+                nilcall(win.clicked_focusable_widget.OnFocus, event,e1,e2,e3)
+            end
+
+            win.focusing_widget=win.clicked_focusable_widget
+
+        elseif win.focusing_widget~=nil then
+            -- focus remains
         end
+        -- signal
+        if win.clicked_widget ~= nil then
+            nilcall(win.clicked_widget.OnMouseClick, event,e1,e2,e3)
+        end 
+
+
+    elseif event == 'mouse_up' then
+        win.clicked_widget, win.clicked_focusable_widget = getwinposwidget(win, e2, e3)
+        -- signal
+        if win.clicked_widget ~= nil then
+            nilcall(win.clicked_widget.OnMouseUp, event,e1,e2,e3)
+        end 
+        win.clicked_widget=nil
+
+    elseif event == 'mouse_scroll' then
+        local scrolled_widget, scrolled_focusable_widget = getwinposwidget(win, e2, e3)
+        -- signal 
+        if scrolled_widget ~= nil then
+            nilcall(scrolled_widget.OnMouseScroll, event,e1,e2,e3)
+        end
+
+    elseif event == 'mouse_drag' then
+        win.dragged_widget, win.dragged_focusable_widget = getwinposwidget(win, e2, e3)
+        if win.dragged_widget~=win.prev_drag_widget then
+            if win.prev_drag_widget ~= nil then
+                -- drag out
+                nilcall(win.prev_drag_widget.OnDragOut, event,e1,e2,e3)
+            end
+            if win.dragged_widget ~= nil then
+                -- drag in
+                nilcall(win.dragged_widget.OnDragIn, event,e1,e2,e3)
+            end
+        elseif win.dragged_widget~=nil then
+            -- dragging
+            nilcall(win.dragged_widget.OnDrag ,event,e1,e2,e3)
+        end
+    
+        win.prev_drag_widget = win.dragged_widget
     end
 end
 
-function handle_focus(object, event,e1,e2,e3)
+function KeyEventHandler(win, event,e1,e2,e3)
+    if event == 'key' then
+        nilcall(win.focusing_widget.OnKey, event,e1,e2,e3)
+    elseif event == 'key_up' then
+        nilcall(win.focusing_widget.OnKeyUp, event,e1,e2,e3)
+    elseif event == 'char' then
+        nilcall(win.focusing_widget.OnChar, event,e1,e2,e3)
+    elseif event == 'paste' then
+        nilcall(win.focusing_widget.OnPaste, event,e1,e2,e3)
+    end
+end
+
+function BroadcastEventHandler(win, event,e1,e2,e3)
     --[[
-        this function only finding the focusing widget(deepest)
-        after finding the last focusable widget, run its OnFocus
+        Broadcast all event to EventListeners
     ]]--
-    if object.is_window==true then
-        nilcall(object.OnFocus,e,e1,e2,e3)
-    else
-        local cx,cy=e2-object.w+1, e3-object.h+1
-        if object.child~=nil then
-            for i,child in pairs(object.child) do
-                if containpos(child, cx,cy) then
-                    handle_mouse_click(child, cx,cy)
-                    return 
-                end
-                -- no child clicked, this object is the clicked object
-                nilcall(object.OnClick,e,e1,e2,e3)
+    local i, func, todo_event
+    todo_event={function()return 0 end}
+    if win.eventDelegate[event] ~= nil then
+        for i, func in pairs(win.eventDelegate[event]) do
+            --nilcall(func, event,e1,e2,e3)
+            table.insert(todo_event, function() func(event,e1,e2,e3) end)
+        end
+    end
+    if win.eventDelegate['all'] ~= nil then
+        for i, func in pairs(win.eventDelegate['all']) do
+            --nilcall(func, event,e1,e2,e3)
+            table.insert(todo_event, function() func(event,e1,e2,e3) end)
+        end
+    end
+    parallel.waitForAll(unpack(todo_event))
+end
+
+function TimerEventHandler(win, event,e1,e2,e3)
+    -- timer_info={t=period, funct=funct}
+    if event == 'timer' then
+        -- e1 is timer_id
+        local timer_info=win.timer[e1]
+        if  timer_info~= nil then
+            -- if the user function return false, stop the timer loop
+            local keep_timer = timer_info.funct(event,e1)
+            if keep_timer then
+                local new_timer_id = os.startTimer(timer_info.period)
+                win.timer[new_timer_id] = timer_info.funct
+            end
+            if e1 ~= new_timer_id then
+                -- clear the old timer_id's timer_info
+                win.timer[e1]=nil
             end
         end
+    end
+
+end
+
+function TimerQueueHandler(win)
+    -- Handle win timer queue.
+    -- this is the first start of a timer, the loop is controlled by TimerEventHandler.
+    -- timer_info={t=period, funct=funct}
+    -- get a timer and connect the function
+    
+    if win.timer_queue ~= nil then
+        for i,tobj in pairs(win.timer_queue) do
+            local timer_id = os.startTimer(tobj.period)
+            win.timer[timer_id] = tobj.funct
+        end
+        -- clear queue
+        win.timer_queue={}
     end
 end
 
@@ -449,6 +554,7 @@ function new_window(x,y,w,h,widget,parent)
     win.focusing_widget = win -- default win
     win.prev_drag_widget = nil 
 
+    win.EventHandler=function(e,e1,e2,e3) handlewindowevent(win,e,e1,e2,e3) end
     return win
 end
 
