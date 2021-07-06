@@ -33,7 +33,7 @@ function getabspos(widget)
     return ox,oy
 end
 
-function getposwidget(widget, x, y, is_dif_win)
+function getposwidget2(widget, x, y, is_dif_win)
     -- this x, y is base on parent coordinate.
     -- first, check if child is valid.
     -- Considering the event sender may duplicate the event to another window's widget
@@ -69,7 +69,7 @@ function getposwidget(widget, x, y, is_dif_win)
     return nil, is_dif_win
 end
 
-function getposfocusablewidget(widget, x, y, is_dif_win)
+function getposfocusablewidget2(widget, x, y, is_dif_win)
     -- this is try to find the lowest clicked focusable widget
     -- this x, y is base on parent coordinate
     -- first, check if child is valid
@@ -100,6 +100,68 @@ function getposfocusablewidget(widget, x, y, is_dif_win)
         return widget,is_dif_win
     end
     return nil, is_dif_win
+end
+
+function getposwidget(widget, x, y)
+    -- this x, y is base on parent coordinate.
+    -- first, check if child is valid.
+    -- Considering the event sender may duplicate the event to another window's widget
+    -- and cause a same function be called more than once by a single signal
+    -- this function will return a bool(is_dif_win), true if this traversal did not visit a window widget.
+
+    if widget.is_window and containpos(widget,x,y)  then 
+        return widget, true
+    end
+
+    local i,w,res,cx,cy
+    local res_is_dif_win
+    cx=x-widget.x+1
+    cy=y-widget.h+1
+
+    if widget.child ~= nil then
+        for i,child in pairs(widget.child) do
+            res, res_is_dif_win = getposwidget(child, cx, cy)
+            if res ~= nil then
+                -- child or its child is the target
+                return res, res_is_dif_win
+            end
+        end
+    end
+    -- second, if no child valid, check self
+    if containpos(widget, x, y) then
+        return widget, false
+    end
+    return nil, nil
+end
+
+function getposfocusablewidget(widget, x, y, is_dif_win)
+    -- this is try to find the lowest clicked focusable widget
+    -- this x, y is base on parent coordinate
+    -- first, check if child is valid
+
+    if widget.is_window and containpos(widget,x,y) and widget.IsFocusable  then 
+        return widget, true
+    end
+
+    local i,w,res, cx,cy
+    local res_is_dif_win
+    cx=x-widget.x+1
+    cy=y-widget.h+1
+
+    if widget.child ~= nil then
+        for i,child in pairs(widget.child) do
+            res, res_is_dif_win = getposwidget(child, cx, cy)
+            if res ~= nil then
+                -- child or its child is the target
+                return res, res_is_dif_win
+            end
+        end
+    end
+    -- second, if no child valid, check self
+    if containpos(widget, x, y) and widget.IsFocusable then
+        return widget, false
+    end
+    return nil, nil
 end
 
 function getwinposwidget(win, x, y) 
@@ -150,6 +212,54 @@ function renderwidget(widget)
         if widget.child ~= nil then
             for i,child in pairs(widget.child) do
                 renderwidget(child)
+            end
+        end
+    end
+end
+
+function handle_mouse_click(object, e,e1,e2,e3)
+    --[[
+        widget may be window
+        when mouse clicked, each win should handle separately,
+        if click traverse on a widget, just keep going to search its chlid
+        if click traverse on a window, stop and make it focus if IsFocusable, and send this event to its EventHandler(e,e1,e2,e3)
+
+        return clicked_object,
+    ]]--
+    if object.is_window==true then
+        nilcall(object.OnClick,e,e1,e2,e3)
+    else
+        local cx,cy=e2-object.w+1, e3-object.h+1
+        if object.child~=nil then
+            for i,child in pairs(object.child) do
+                if containpos(child, cx,cy) then
+                    handle_mouse_click(child, cx,cy)
+                    return 
+                end
+                -- no child clicked, this object is the clicked object
+                nilcall(object.OnClick,e,e1,e2,e3)
+            end
+        end
+    end
+end
+
+function handle_focus(object, event,e1,e2,e3)
+    --[[
+        this function only finding the focusing widget(deepest)
+        after finding the last focusable widget, run its OnFocus
+    ]]--
+    if object.is_window==true then
+        nilcall(object.OnFocus,e,e1,e2,e3)
+    else
+        local cx,cy=e2-object.w+1, e3-object.h+1
+        if object.child~=nil then
+            for i,child in pairs(object.child) do
+                if containpos(child, cx,cy) then
+                    handle_mouse_click(child, cx,cy)
+                    return 
+                end
+                -- no child clicked, this object is the clicked object
+                nilcall(object.OnClick,e,e1,e2,e3)
             end
         end
     end
