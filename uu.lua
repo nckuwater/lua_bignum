@@ -301,14 +301,16 @@ function MouseEventHandler(win, event,e1,e2,e3)
 end
 
 function KeyEventHandler(win, event,e1,e2,e3)
-    if event == 'key' then
-        nilcall(win.focusing_widget.OnKey, event,e1,e2,e3)
-    elseif event == 'key_up' then
-        nilcall(win.focusing_widget.OnKeyUp, event,e1,e2,e3)
-    elseif event == 'char' then
-        nilcall(win.focusing_widget.OnChar, event,e1,e2,e3)
-    elseif event == 'paste' then
-        nilcall(win.focusing_widget.OnPaste, event,e1,e2,e3)
+    if win.focusing_widget~=nil then
+        if event == 'key' then
+            nilcall(win.focusing_widget.OnKey, event,e1,e2,e3)
+        elseif event == 'key_up' then
+            nilcall(win.focusing_widget.OnKeyUp, event,e1,e2,e3)
+        elseif event == 'char' then
+            nilcall(win.focusing_widget.OnChar, event,e1,e2,e3)
+        elseif event == 'paste' then
+            nilcall(win.focusing_widget.OnPaste, event,e1,e2,e3)
+        end
     end
 end
 
@@ -331,6 +333,24 @@ function BroadcastEventHandler(win, event,e1,e2,e3)
         end
     end
     parallel.waitForAll(unpack(todo_event))
+
+    -- Broadcast to subwindows by recursion
+    BroadcastEventToSubwindows(win, event,e1,e2,e3)
+end
+
+function BroadcastEventToSubwindows(win, event,e1,e2,e3)
+    -- traverse all children, 
+    -- if find window, call its BroadcastEventHandler.
+    -- if find widget, call this function to traverse it.
+    if type(win.child)=='table' then
+        for i,c in pairs(win.child) do
+            if c.is_window then
+                nilcall(c.BroadcastEventHandler)
+            else
+                BroadcastEventToSubwindows(c, event,e1,e2,e3)
+            end
+        end
+    end
 end
 
 function TimerEventHandler(win, event,e1,e2,e3)
@@ -361,13 +381,31 @@ function TimerQueueHandler(win)
     -- get a timer and connect the function
     
     if win.timer_queue ~= nil then
-        for i,tobj in pairs(win.timer_queue) do
-            local timer_id = os.startTimer(tobj.period)
-            win.timer[timer_id] = tobj.funct
+        for i,timer_info in pairs(win.timer_queue) do
+            local timer_id = os.startTimer(timer_info.period)
+            win.timer[timer_id] = timer_info
         end
         -- clear queue
         win.timer_queue={}
     end
+end
+
+function EventHandler(win, event,e1,e2,e3)
+    win.MouseEventHandler(event,e1,e2,e3)
+    win.KeyEventHandler(event,e1,e2,e3)
+    win.BroadcastEventHandler(event,e1,e2,e3)
+    win.TimerEventHandler(event,e1,e2,e3)
+    win.TimerQueueHandler()
+end
+
+function EventPuller(win)
+    if type(win.pullEvent)=='function' then
+        event,e1,e2,e3 = win.pullEvent() -- free to change in win
+    else
+        event,e1,e2,e3 = os.pullEvent()
+    end
+    parallel.waitForAll(function() win.EventHandler(event,e1,e2,e3) end, function() EventPuller(win)end)
+    win.render()
 end
 
 function handlewindowevent(win, event,e1,e2,e3)
@@ -490,11 +528,8 @@ function handlewindowevent(win, event,e1,e2,e3)
 
 end
 
-function eventpuller(win)
-    
-end
 
-function mainloop(win)
+function mainloop_depr(win)
     --[[
     win.FLAG_EXIT = false
     win.focused_widget = nil
@@ -523,6 +558,10 @@ function mainloop(win)
     end
     
     if win.OnClose~=nil then win.OnClose() end
+end
+
+function mainloop(win)
+    win.EventPuller()
 end
 
 function new_window(x,y,w,h,widget,parent)
@@ -554,7 +593,24 @@ function new_window(x,y,w,h,widget,parent)
     win.focusing_widget = win -- default win
     win.prev_drag_widget = nil 
 
-    win.EventHandler=function(e,e1,e2,e3) handlewindowevent(win,e,e1,e2,e3) end
+    --win.EventHandler=function(e,e1,e2,e3) handlewindowevent(win,e,e1,e2,e3) end
+    win.pullEvent=os.pullEvent
+    win.EventPuller=function()EventPuller(win)end
+    win.EventHandler=         function(e,e1,e2,e3) EventHandler(win,e,e1,e2,e3) end
+    win.MouseEventHandler=    function(e,e1,e2,e3) MouseEventHandler(win,e,e1,e2,e3) end
+    win.KeyEventHandler=      function(e,e1,e2,e3) KeyEventHandler(win,e,e1,e2,e3) end
+    win.BroadcastEventHandler=function(e,e1,e2,e3) BroadcastEventHandler(win,e,e1,e2,e3) end
+    win.TimerEventHandler=    function(e,e1,e2,e3) TimerEventHandler(win,e,e1,e2,e3) end
+    win.TimerQueueHandler=    function() TimerQueueHandler(win) end
+    
+--[[function EventHandler(win, event,e1,e2,e3)
+    win.MouseEventHandler(event,e1,e2,e3)
+    win.KeyEventHandler(event,e1,e2,e3)
+    win.BroadcastEventHandler(event,e1,e2,e3)
+    win.TimerEventHandler(event,e1,e2,e3)
+    win.TimerQueueHandler()
+end]]--
+
     return win
 end
 

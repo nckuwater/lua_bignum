@@ -1,4 +1,5 @@
-gui=require('gui')
+--gui=require('gui')
+gui=require('uu')
 mo = peripheral.wrap('right')
 if mo~=nil then
     mo.clear()
