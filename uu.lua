@@ -121,7 +121,7 @@ function getposwidget(widget, x, y)
     local i,w,res,cx,cy
     local res_is_win
     cx=x-widget.x+1
-    cy=y-widget.h+1
+    cy=y-widget.y+1
 
     if widget.child ~= nil then
         for i,child in pairs(widget.child) do
@@ -155,7 +155,7 @@ function getposfocusablewidget(widget, x, y)
     local i,w,res, cx,cy
     local res_is_win
     cx=x-widget.x+1
-    cy=y-widget.h+1
+    cy=y-widget.y+1
 
     if widget.child ~= nil then
         for i,child in pairs(widget.child) do
@@ -404,8 +404,12 @@ function EventPuller(win)
     else
         event,e1,e2,e3 = os.pullEvent()
     end
-    parallel.waitForAll(function() win.EventHandler(event,e1,e2,e3) end, function() EventPuller(win)end)
-    win.render()
+
+    if win.is_terminate then
+        return
+    end
+
+    parallel.waitForAll(function() win.EventHandler(event,e1,e2,e3) end, function() EventPuller(win)end, function()nilcall(win.Render)end)
 end
 
 function handlewindowevent(win, event,e1,e2,e3)
@@ -595,6 +599,8 @@ function new_window(x,y,w,h,widget,parent)
 
     --win.EventHandler=function(e,e1,e2,e3) handlewindowevent(win,e,e1,e2,e3) end
     win.pullEvent=os.pullEvent
+    win.queueEvent=os.queueEvent
+
     win.EventPuller=function()EventPuller(win)end
     win.EventHandler=         function(e,e1,e2,e3) EventHandler(win,e,e1,e2,e3) end
     win.MouseEventHandler=    function(e,e1,e2,e3) MouseEventHandler(win,e,e1,e2,e3) end
@@ -602,6 +608,8 @@ function new_window(x,y,w,h,widget,parent)
     win.BroadcastEventHandler=function(e,e1,e2,e3) BroadcastEventHandler(win,e,e1,e2,e3) end
     win.TimerEventHandler=    function(e,e1,e2,e3) TimerEventHandler(win,e,e1,e2,e3) end
     win.TimerQueueHandler=    function() TimerQueueHandler(win) end
+    
+    win.Render=function() renderwidget(win) end
     
 --[[function EventHandler(win, event,e1,e2,e3)
     win.MouseEventHandler(event,e1,e2,e3)
@@ -736,8 +744,11 @@ function new_win1()
     local clicked_display = {x=2,y=12,w=20,h=1, name='clicked display', text='Waiting', bc=colors.lightBlue}
     local date_label = {x=1,y=1,w=20,h=1, name='date_label', text=os.date(), bc=colors.white, tc=colors.black}
 
-    local exit_btn = {x=1,y=1,w=5,h=1,name='exit btn', text='exit', bc=colors.red, tc=colors.white}
-    exit_btn.OnMouseClick = function(e,e1,e2,e3) win.FLAG_EXIT=true exit_btn.bc=colors.pink end
+    local exit_btn = {x=1,y=1,w=5,h=1,name='exit btn', text=' '..string.char(215), bc=colors.red, tc=colors.white}
+    exit_btn.OnMouseClick = function(e,e1,e2,e3)
+            win.FLAG_EXIT=true
+            exit_btn.bc=colors.pink 
+        end
 
     
     win.bc=colors.lightGray
@@ -766,8 +777,18 @@ function basic_window(x,y,w,h)
     local win=new_window(x,y,w,h)
     win.bc=colors.white
     local title_bar={x=1,y=1,w=win.w, h=1, name='title_bar', text='title', bc=colors.gray}
-    local exit_btn={x=1,y=1,w=5,h=1, name='exit_btn', text='exit',bc=colors.red, tc=colors.white}
-    exit_btn.OnMouseClick=function(e,e1,e2,e3)win.FLAG_EXIT=true exit_btn.bc=colors.yellow end
+    local exit_btn=new_button(1,1,5,1)
+    exit_btn.name='exit_btn'
+    exit_btn.text='  '..string.char(215)
+    --exit_btn.bc,exit_btn.tc=colors.red, colors.white
+    exit_btn.normal_bc, exit_btn.clicked_bc=colors.red, colors.yellow
+    exit_btn.bc,exit_btn.tc=exit_btn.normal_bc,colors.white
+
+    exit_btn.OnUp=function(e,e1,e2,e3)
+        win.is_terminate=true
+        win.queueEvent('terminate_window') 
+        --exit_btn.bc=colors.yellow 
+    end
 
     addwidget(win, title_bar)
     addwidget(title_bar, exit_btn, 'ne')
