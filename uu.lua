@@ -360,10 +360,11 @@ function TimerEventHandler(win, event,e1,e2,e3)
         local timer_info=win.timer[e1]
         if  timer_info~= nil then
             -- if the user function return false, stop the timer loop
-            local keep_timer = timer_info.funct(event,e1)
+            local keep_timer = timer_info.funct(event,e1,e2,e3)
+            local new_timer_id
             if keep_timer then
-                local new_timer_id = os.startTimer(timer_info.period)
-                win.timer[new_timer_id] = timer_info.funct
+                new_timer_id = os.startTimer(timer_info.t)
+                win.timer[new_timer_id] = timer_info
             end
             if e1 ~= new_timer_id then
                 -- clear the old timer_id's timer_info
@@ -379,23 +380,42 @@ function TimerQueueHandler(win)
     -- this is the first start of a timer, the loop is controlled by TimerEventHandler.
     -- timer_info={t=period, funct=funct}
     -- get a timer and connect the function
-    
-    if win.timer_queue ~= nil then
+
+    if win.timer_queue ~= nil and #win.timer_queue > 0 then
         for i,timer_info in pairs(win.timer_queue) do
-            local timer_id = os.startTimer(timer_info.period)
+            local timer_id = os.startTimer(timer_info.t)
             win.timer[timer_id] = timer_info
         end
         -- clear queue
         win.timer_queue={}
     end
+    return false
 end
 
+
 function EventHandler(win, event,e1,e2,e3)
-    win.MouseEventHandler(event,e1,e2,e3)
-    win.KeyEventHandler(event,e1,e2,e3)
-    win.BroadcastEventHandler(event,e1,e2,e3)
+    if win.is_terminate then
+        return
+    end
+
+    -- Catch render timer
+    local IsRenderTimerEvent=win.RenderTimerHandler(event,e1,e2,e3)
+    if IsRenderTimerEvent then
+        win.RenderController()
+        return
+    else
+        win.IsNeedRender=true
+    end
+
+    if event~='timer' then
+        win.MouseEventHandler(event,e1,e2,e3)
+        win.KeyEventHandler(event,e1,e2,e3)
+        win.BroadcastEventHandler(event,e1,e2,e3)
+    end
+    
     win.TimerEventHandler(event,e1,e2,e3)
     win.TimerQueueHandler()
+
 end
 
 function EventPuller(win)
@@ -408,8 +428,23 @@ function EventPuller(win)
     if win.is_terminate then
         return
     end
+    --[[if win.LastPullTime==nil then
+        win.LastPullTime=os.epoch('utc')
+    else
+        local PullTimer=os.epoch('utc')
+        local _rate=150
+        local _freq=(1000/_rate)
+        local diff=PullTimer-win.LastPullTime
+        win.LastPullTime=PullTimer
+        --term.clear()
+        --print(diff, _freq)
+        if diff <= _freq then
+            sleep((_freq-diff)/1000)
+        end
+    end]]--
 
-    parallel.waitForAll(function() win.EventHandler(event,e1,e2,e3) end, function() EventPuller(win)end, function()nilcall(win.Render)end)
+    --parallel.waitForAll(function() win.EventHandler(event,e1,e2,e3) end, function() EventPuller(win)end, function()nilcall(win.Render)end)
+    parallel.waitForAll(function() win.EventHandler(event,e1,e2,e3) end, function() EventPuller(win)end)
 end
 
 function handlewindowevent(win, event,e1,e2,e3)
@@ -564,7 +599,43 @@ function mainloop_depr(win)
     if win.OnClose~=nil then win.OnClose() end
 end
 
+function RenderTimerHandler(win, event,e1,e2,e3)
+    -- return true if the event is for render-timer
+    if event=='timer' and e1==win.RenderTimerId then
+        nilcall(win.RenderTimerFunction)
+
+        local new_render_timer_id=os.startTimer(win.RenderTimerInterval)
+        win.RenderTimerId = new_render_timer_id
+        
+        return true
+    end
+    return false
+end
+
+function addRenderController(win, rate)
+    rate=rate or 30
+    local interval = 1/rate
+    win.IsNeedRender=true
+    win.RenderTimerInterval=interval
+    win.RenderTimerRate=rate
+    win.RenderTimerId = os.startTimer(interval)
+
+    win.RenderTimerHandler = function(e,e1,e2,e3)return RenderTimerHandler(win,e,e1,e2,e3)end
+    win.RenderController = function()return RenderController(win)end
+end
+
+function RenderController(win)
+    -- This function will check if any event happened in the interval 
+    -- in render-timer
+    if win.IsNeedRender then
+        win.Render()
+        win.IsNeedRender=false
+    end
+    return true
+end
+
 function mainloop(win)
+    addRenderController(win, 30)
     win.EventPuller()
 end
 
@@ -773,6 +844,10 @@ function new_win1()
 end
 
 function basic_window(x,y,w,h)
+    --[[
+        a basic window with title-bar and exit-button
+
+    ]]--
     -- top bar
     local win=new_window(x,y,w,h)
     win.bc=colors.white
@@ -852,6 +927,7 @@ function new_button(x,y,w,h)
     return btn
 end
 
+
 function new_label(text)
     local label=new_widget()
     label.w=string.len(text)
@@ -859,6 +935,59 @@ function new_label(text)
     label.bc=colors.white
     label.tc=colors.black
     return label
+end
+
+function TextPanel_KeyEventHandler(widget,e,e1,e2,e3)
+    if e1==keys.right then
+        if widget.cursorPos.x+1 <= #widget.input_text then
+            widget.cursorPos.x=widget.cursorPos.x+1
+            widget.window.setCursorPos(widget.cursorPos.x,widget.cursorPos.y)
+        end
+    elseif e1==keys.backspace then
+        local cx,cy=term.getCursorPos()
+        if true then
+            widget.input_text,_,_=widget.window.getLine(1)
+            --string.sub(widget.input_text,1,widget.cursorPos.x-2)..
+            --string.sub(widget.input_text,widget.cursorPos.x,#widget.input_text)
+            widget.text=widget.input_text
+        end
+        fp=fs.open('tmp.log','w')
+        fp.write(widget.input_text)
+        fp.close()
+    end
+end
+
+function TextPanel_CharEventHandler(widget,e,e1,e2,e3)
+    if e1~=nil then
+        widget.input_text=widget.input_text..e1
+        widget.text=widget.input_text
+    end
+end
+
+function TextPanel_OnFocus(widget,e,e1,e2,e3)
+    widget.window.restoreCursor()
+
+    widget.cursorPos.x=#widget.input_text+1
+    widget.window.setCursorPos(#widget.input_text+1,1)
+    widget.window.setCursorBlink(true)
+    --term.setCursorPos(#widget.input_text+1,1)
+    --term.redirect(widget.window)
+    --term.setCursorBlink(true)
+    
+end
+
+function new_TextPanel(x,y,w,h)
+    local widget=new_widget(x,y,w,h)
+    widget.cursorPos={x=1,y=1}
+    widget.input_text='testi'
+    widget.text=widget.input_text
+    widget.IsFocusable=true -- make this widget can be focus and get key events
+    widget.OnKey=function(e,e1,e2,e3)TextPanel_KeyEventHandler(widget,e,e1,e2,e3)end
+    widget.OnFocus=function(e,e1,e2,e3)TextPanel_OnFocus(widget,e,e1,e2,e3)end
+    widget.OnChar=function(e,e1,e2,e3)TextPanel_CharEventHandler(widget,e,e1,e2,e3)end
+    widget.bc=colors.lightBlue
+    
+    return widget
 end
 
 function resize(widget,w,h)
@@ -961,7 +1090,8 @@ gui = {
     new_button=new_button,
     new_label=new_label,
     new_dropdown=new_dropdown,
-    new_image=new_image
+    new_image=new_image,
+    new_TextPanel=new_TextPanel
 }
 
 return gui
