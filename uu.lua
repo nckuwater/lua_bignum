@@ -419,32 +419,37 @@ function EventHandler(win, event,e1,e2,e3)
 end
 
 function EventPuller(win)
-    if type(win.pullEvent)=='function' then
-        event,e1,e2,e3 = win.pullEvent() -- free to change in win
-    else
-        event,e1,e2,e3 = os.pullEvent()
-    end
-
-    if win.is_terminate then
-        return
-    end
-    --[[if win.LastPullTime==nil then
-        win.LastPullTime=os.epoch('utc')
-    else
-        local PullTimer=os.epoch('utc')
-        local _rate=150
-        local _freq=(1000/_rate)
-        local diff=PullTimer-win.LastPullTime
-        win.LastPullTime=PullTimer
-        --term.clear()
-        --print(diff, _freq)
-        if diff <= _freq then
-            sleep((_freq-diff)/1000)
+    while true do
+        if type(win.pullEvent)=='function' then
+            event,e1,e2,e3 = win.pullEvent() -- free to change in win
+        else
+            event,e1,e2,e3 = os.pullEvent()
         end
-    end]]--
 
-    --parallel.waitForAll(function() win.EventHandler(event,e1,e2,e3) end, function() EventPuller(win)end, function()nilcall(win.Render)end)
-    parallel.waitForAll(function() win.EventHandler(event,e1,e2,e3) end, function() EventPuller(win)end)
+        if win.is_terminate then
+            return
+        end
+        --[[if win.LastPullTime==nil then
+            win.LastPullTime=os.epoch('utc')
+        else
+            local PullTimer=os.epoch('utc')
+            local _rate=150
+            local _freq=(1000/_rate)
+            local diff=PullTimer-win.LastPullTime
+            win.LastPullTime=PullTimer
+            --term.clear()
+            --print(diff, _freq)
+            if diff <= _freq then
+                sleep((_freq-diff)/1000)
+            end
+        end]]--
+
+        --parallel.waitForAll(function() win.EventHandler(event,e1,e2,e3) end, function() EventPuller(win)end, function()nilcall(win.Render)end)
+        --parallel.waitForAll(function() win.EventHandler(event,e1,e2,e3) end, function() EventPuller(win)end)
+
+        win.EventHandler(event,e1,e2,e3)
+    end
+    --EventPuller(win)
 end
 
 function handlewindowevent(win, event,e1,e2,e3)
@@ -632,6 +637,16 @@ function RenderController(win)
         win.IsNeedRender=false
     end
     return true
+end
+
+function TerminateHandler(win, event,e1,e2,e3)
+    -- return true if to terminate
+    -- false to continue running
+    if event=='terminate_window' and e1==win then
+        nilcall(win.OnTerminate)
+        return true
+    end
+    return false
 end
 
 function mainloop(win)
@@ -861,7 +876,7 @@ function basic_window(x,y,w,h)
 
     exit_btn.OnUp=function(e,e1,e2,e3)
         win.is_terminate=true
-        win.queueEvent('terminate_window') 
+        win.queueEvent('terminate_window', win) 
         --exit_btn.bc=colors.yellow 
     end
 
@@ -939,18 +954,34 @@ end
 
 function TextPanel_KeyEventHandler(widget,e,e1,e2,e3)
     if e1==keys.right then
-        if widget.cursorPos.x+1 <= #widget.input_text then
+        -- move cursor right by 1
+        local cx,cy=widget.cursorPos.x, widget.cursorPos.y
+        if widget.cursorPos.x <= #widget.input_text then
             widget.cursorPos.x=widget.cursorPos.x+1
-            widget.window.setCursorPos(widget.cursorPos.x,widget.cursorPos.y)
+        end
+    elseif e1==keys.left then
+        local cx,cy=widget.cursorPos.x, widget.cursorPos.y
+        if cx>1 then
+            widget.cursorPos.x=widget.cursorPos.x-1
         end
     elseif e1==keys.backspace then
-        local cx,cy=term.getCursorPos()
-        if true then
-            widget.input_text,_,_=widget.window.getLine(1)
-            --string.sub(widget.input_text,1,widget.cursorPos.x-2)..
-            --string.sub(widget.input_text,widget.cursorPos.x,#widget.input_text)
-            widget.text=widget.input_text
+        local cx,cy=widget.cursorPos.x, widget.cursorPos.y
+        local tlen=#widget.input_text
+        if tlen>0 and cx>1 then
+            -- remove cx-1
+            widget.input_text=
+            string.sub(widget.input_text,1 ,cx-2)..
+            string.sub(widget.input_text,cx,#widget.input_text)
+            widget.cursorPos.x=widget.cursorPos.x-1
+
+            if widget.password_replace == nil then
+                widget.text=widget.input_text
+            else
+                widget.text=string.rep(widget.password_replace, #widget.input_text)
+            end
         end
+        
+    elseif e1==keys.enter then
         fp=fs.open('tmp.log','w')
         fp.write(widget.input_text)
         fp.close()
@@ -959,21 +990,56 @@ end
 
 function TextPanel_CharEventHandler(widget,e,e1,e2,e3)
     if e1~=nil then
-        widget.input_text=widget.input_text..e1
-        widget.text=widget.input_text
+        local cx,cy=widget.cursorPos.x, widget.cursorPos.y
+        widget.input_text=
+        string.sub(widget.input_text,1, cx-1)..e1..
+        string.sub(widget.input_text,cx, #widget.input_text)
+        widget.cursorPos.x=widget.cursorPos.x+1
+
+        if widget.password_replace == nil then
+            widget.text=widget.input_text
+        else
+            widget.text=string.rep(widget.password_replace, #widget.input_text)
+        end
+        
     end
 end
 
 function TextPanel_OnFocus(widget,e,e1,e2,e3)
-    widget.window.restoreCursor()
+    -- this can be better like adjust by mouse_click position
 
     widget.cursorPos.x=#widget.input_text+1
-    widget.window.setCursorPos(#widget.input_text+1,1)
+
     widget.window.setCursorBlink(true)
-    --term.setCursorPos(#widget.input_text+1,1)
-    --term.redirect(widget.window)
-    --term.setCursorBlink(true)
-    
+end
+
+function TextPanel_OnBlur(widget,e,e1,e2,e3)
+    widget.window.setCursorBlink(false)
+
+end
+
+function TextPanel_Render(widget)
+    -- Override the way gui lib render
+    -- because we need to deal with cursors.
+    if widget.window ~= nil then
+        if widget.bc == nil then
+            widget.window.setBackgroundColor(colors.blue)
+        else
+            widget.window.setBackgroundColor(widget.bc)
+        end
+        widget.window.setTextColor(widget.tc or colors.black)
+        widget.window.clear()
+        widget.window.redraw()
+        widget.window.setCursorPos(1,1)
+        if widget.text~=nil then widget.window.write(widget.text) end
+        widget.window.setCursorPos(widget.cursorPos.x, widget.cursorPos.y)
+    end
+    -- Render children
+    if widget.child ~= nil then
+        for i,child in pairs(widget.child) do
+            renderwidget(child)
+        end
+    end
 end
 
 function new_TextPanel(x,y,w,h)
@@ -985,7 +1051,11 @@ function new_TextPanel(x,y,w,h)
     widget.OnKey=function(e,e1,e2,e3)TextPanel_KeyEventHandler(widget,e,e1,e2,e3)end
     widget.OnFocus=function(e,e1,e2,e3)TextPanel_OnFocus(widget,e,e1,e2,e3)end
     widget.OnChar=function(e,e1,e2,e3)TextPanel_CharEventHandler(widget,e,e1,e2,e3)end
+    widget.OnBlur=function(e,e1,e2,e3)TextPanel_OnBlur(widget,e,e1,e2,e3)end
+    widget.render=function()TextPanel_Render(widget)end
+
     widget.bc=colors.lightBlue
+    widget.password_replace='x'
     
     return widget
 end

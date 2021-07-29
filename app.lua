@@ -29,7 +29,7 @@ function test()
     gui.resize(lmg, 20,20)
     gui.addwidget(win,lmg)
 
-    local textpanel=gui.new_TextPanel(20, 3, 15, 1)
+    local textpanel=gui.new_TextPanel(20, 3, 25, 1)
     gui.addwidget(win, textpanel)
 
     win.OnMouseClick=function(e,e1,e2,e3) 
