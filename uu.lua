@@ -1055,7 +1055,7 @@ function new_TextPanel(x,y,w,h)
     widget.render=function()TextPanel_Render(widget)end
 
     widget.bc=colors.lightBlue
-    widget.password_replace='x'
+    widget.password_replace='#'
     
     return widget
 end

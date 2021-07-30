@@ -1,5 +1,7 @@
 --gui=require('gui')
 gui=require('uu')
+comp=require('components')
+
 mo = peripheral.wrap('right')
 if mo~=nil then
     mo.clear()
@@ -29,7 +31,9 @@ function test()
     gui.resize(lmg, 20,20)
     gui.addwidget(win,lmg)
 
-    local textpanel=gui.new_TextPanel(20, 3, 25, 1)
+    --local textpanel=gui.new_TextPanel(20, 3, 25, 1)
+    local textpanel=comp.new_TextPanel(20, 3, 25, 1)
+    textpanel.hint_text = 'password'
     gui.addwidget(win, textpanel)
 
     win.OnMouseClick=function(e,e1,e2,e3) 
