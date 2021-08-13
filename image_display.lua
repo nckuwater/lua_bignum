@@ -38,23 +38,11 @@ function disp(mo, path)
     term.clear()
     paintutils.drawImage(image, 1, 1)
     mo.setCursorPos(1, 1)
-    for i=0, 15 do
-        mo.setBackgroundColor(bit.blshift(1, i))
-        mo.write(' ')
-    end
-
-    --[[for y=1, #image do
-        mo.setCursorPos(1, y)
-        for x=1, #(image[0]) do
-            mo.setBackgroundColor(image[x][y])
-            mo.write(' ')
-        end
-    end]]
-    
     --[[for i=0, 15 do
         mo.setBackgroundColor(bit.blshift(1, i))
         mo.write(' ')
     end]]
+
     
     term.redirect(ori_term)
 end
@@ -100,11 +88,18 @@ function pf(path)
 end
 
 function main(side, path)
-    local mo = peripheral.wrap(side)
+    local mo
+    if side~=nil then
+        mo = peripheral.wrap(side)
+    else
+        mo = peripheral.find('monitor')
+    end
+    if mo==nil then error('no monitor found') end
     --pf('the_paint.nfp')
 
     disp(mo, path)
 
 end
-
-main('right', './misc/image.cimg')
+args={...}
+--main('right', './misc/image.cimg')
+main(args[2], args[1])
