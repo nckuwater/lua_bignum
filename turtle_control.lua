@@ -1,7 +1,8 @@
 local MODEM_SIDE='right'
 local PTC='test'
-local HostName='controller'
-
+local RECV_TIMEOUT=2
+--local HostName='controller'
+rednet.open(MODEM_SIDE)
 
 function create_arr(len, val)
     local m={}
@@ -27,7 +28,7 @@ end
 function rpc_call(tid, rpc, protocol)
     protocol=protocol or PTC
     rednet.send(tid, rpc, protocol)
-    local id,mes=recv(tid)
+    local id,mes=recv(tid, protocol, RECV_TIMEOUT)
     return id,mes
 end
 function rpc_all(ids, rpc, protocol, reverse)
@@ -44,6 +45,7 @@ function rpc_all(ids, rpc, protocol, reverse)
             tid=ids[i]
             res_ids[tid],res_list[tid]=rpc_call(tid, rpc, protocol)
         end
+    end
     return res_ids,res_list
 end
 
@@ -57,8 +59,7 @@ function get_turtles_pos(ids, bx,by,bz)
     local rpc={command=command, args=args}
     local pos_data={}
     for i, tid in pairs(ids) do    
-        rednet.send(tid, rpc, PTC)
-        id, mes=recv(tid)
+        id, mes=rpc_call(tid,rpc)
         -- adjust to local position
         mes[1]=mes[1]-bx+1
         mes[2]=mes[2]-by+1
@@ -77,9 +78,10 @@ function get_turtles_FuelLevel(ids)
             command={'turtle', 'getFuelLevel'},
             args={}
         }
-        local fuel=rpc_call(tid, rpc)
+        local id,fuel=rpc_call(tid, rpc)
         fuel_data[tid]=fuel
     end
+    print(textutils.serialise(fuel_data))
     return fuel_data
 end
 
@@ -134,21 +136,33 @@ function check_turtles_item(ids, items, count)
     count=count or 1
     local res, ic
     res=true
-    fail_ids={}
+    fails={}
     for i,id in pairs(ids) do
         ic=count_turtle_item(id, items[i])
         if ic<count then
             res=false
-            table.insert(fail_ids, id)
+            table.insert(fails, {id, items[i]})
         end
     end
-    return res, fail_ids
+    return res, fails
+end
+function send_place_check_info(fails)
+    local rpc={
+        command={'print'},
+        args={}
+    }
+    for tid, mat in fails do
+        rpc.args[1]=mat
+        rpc_call(tid, rpc)
+    end
 end
 
 function get_turtles_y(ids,by)
     local pos=get_turtles_pos(ids, nil,by,nil)
     local ys={}
-    for k,v in pairs(by) do
+    print('pos')
+    print(textutils.serialise(pos))
+    for k,v in pairs(pos) do
         ys[k]=pos[k][2]
     end
     return ys
@@ -156,6 +170,8 @@ end
 
 function get_turtles_y_diff(ids, heights)
     local res=get_turtles_y(ids)
+    print('tury')
+    print(textutils.serialise(res))
     for k,v in pairs(res) do
         res[k]=heights[k]-res[k]
     end
@@ -197,7 +213,7 @@ end
 function init_blueprint(bp, x,y,z)
     --_G.bp=bp
     
-    bp.mat_map=bp['material_data'][1] -- y,x,z -> x,z
+    bp.mat_map=bp['material_data'] -- y,x,z -> x,z
     bp.mat_dict=bp['palette']
     -- real block_id = bp.material_dict[mat_map[y][x][z]]
     bp.y_map=bp['height_data'][1]
@@ -278,6 +294,7 @@ function process_bp(bp)
             print('turtle need refuel')
             sleep(20)
         end
+
         bp.state='move-y'
 
     elseif bp.state=='move-y' then
@@ -285,11 +302,20 @@ function process_bp(bp)
         if res==false then return false end
         bp.state='place-check'
 
-    elseif bp.state=='place-check'
+    elseif bp.state=='place-check' then
         local mat_list=get_mat_list(bp)
-        while not check_turtles_item(bp.tids, mat_list, 1) do
+        local res, fails=check_turtles_item(bp,
+                         tids, mat_list, 1)
+        if not res then
+            send_place_check_info(fails)
+        end
+        while not res do
+            res,fails=check_turtles_item(bp.tids, mat_list, 1)
             print('place-check failed')
             print('turtle need mat')
+            if not res then
+                send_place_check_info(fails)
+            end
             sleep(20)
         end
         bp.state='place'
@@ -355,7 +381,7 @@ function move_all(ids, direction, dist)
 
 end
 
-function move(id, direction, dist)do
+function move(id, direction, dist)
     direction=direction or 'forward'
     dist=dist or 1
     local rpc={
@@ -375,9 +401,9 @@ function move_y(ids, ys)
     -- ys is each dist
     for i, id in pairs(ids) do
         if ys[i]>0 then
-            move(id, 'Up', ys[i])
-        elseif y[i]<0 then
-            move(id, 'Down', math.abs(ys[i]))
+            move(id, 'up', ys[i])
+        elseif ys[i]<0 then
+            move(id, 'down', math.abs(ys[i]))
         end
     end
     return true
@@ -399,13 +425,16 @@ function refuel_all(ids)
 end
 
 function main()
-    local path=''
+    local path='bp'
     local bp=load_json(path)
     init_blueprint(bp)
-    bp.tids={}
-    bp.tcount=0
+    bp.tids={3,2,1}
+    bp.tcount=3
     while bp.state~='all-done' do
-        process_bp(bp)
+        print('process')
         print('current state:', bp.state)
+        process_bp(bp)
+        read()
     end
 end
+main()
