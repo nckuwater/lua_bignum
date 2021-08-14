@@ -2,58 +2,17 @@ local MODEM_SIDE='right'
 local PTC='test'
 local HostName='controller'
 
-rednet.open(MODEM_SIDE)
-if PTC ~= nil then
-    rednet.host(PTC, HostName)
-end
 
-
-local turtles=settings.get('turtles') or {}
-local turtle_length=settings.get('turtle_length') or 0
-local bx, by, bz=0,0,0
-local bp={}
-
-print(textutils.serialise(turtles))
-
-function register_turtle(id, pos)
-    --top is 0
-    print('Register turtle', id, 'at:', pos)
-    if pos==nil then return end
-    turtles[pos]=id
-    settings.set('turtles', turtles)
-    --print(type(pos))
-    --print(type(turtle_length))
-    if pos >= turtle_length then 
-        turtle_length=pos 
-    end
-    settings.set('turtle_length', turtle_length)
-    settings.save()
-end
-function listen_turtle_register()
-    local id, mes
-    while true do
-        id, mes = rednet.receive(PTC)
-        print(id, mes)
-        --print(textutils.serialise(mes))
-        print(textutils.unserialise(mes))
-        if mes=='stop' then
-            settings.save()
-            break
-        end
-        mes=textutils.unserialise(mes)
-        mes=tonumber(mes)
-        register_turtle(id, mes)
-        
-    end    
-end
-
-function get_turtles_pos()
+function get_turtles_pos(ids, bx,by,bz)
+    bx=bx or 1
+    by=by or 1
+    bz=bz or 1
     local id, mes
     local command={'gps','locate'}
     local args={}
     local rpc={command=command, args=args}
     local pos_data={}
-    for i, tid in pairs(turtles) do    
+    for i, tid in pairs(ids) do    
         rednet.send(tid, rpc, PTC)
         id, mes=recv(tid)
         -- adjust to local position
@@ -67,40 +26,80 @@ function get_turtles_pos()
     return pos_data
 end
 
-function get_turtles_FuelLevel()
+function get_turtles_FuelLevel(ids)
     local fuel_data={}
-    for i,tid in pairs(turtles) do
+    for i,tid in pairs(ids) do
         local rpc={
             command={'turtle', 'getFuelLevel'},
             args={}
         }
         local fuel=rpc_call(tid, rpc)
         fuel_data[tid]=fuel
-        
     end
     return fuel_data
 end
 
-function check_turtles_FuelLevel(low_line)
+function check_turtles_FuelLevel(ids, low_line)
     -- should make sure that turtle can go back to refuel position
-    local fuel_data=get_turtles_FuelLevel()
+    local fuel_data=get_turtles_FuelLevel(ids)
     local need_refuel=false
     for k,v in pairs(fuel_data) do
         print(k, textutils.serialise(v))
         if v[1]<low_line then
-            return true
+            return false
         end
     end
-    return false
+    return true
+end
+function check_turtles_each_FuelLevel(ids, low_lines)
+    local fuel_data=get_turtles_FuelLevel(ids)
+    local need_refuel=false
+    for k,v in pairs(fuel_data) do
+        print(k, textutils.serialise(v))
+        if v[1]<low_lines[k] then
+            return false
+        end
+    end
+    return true
 end
 
+
+function get_turtle_inventory(id,detail)
+    detail=detail or false
+    local rpc={
+        command={'get_inventory_list'},
+        args={detail}
+    }
+    local res=rpc_call(id, rpc)
+    return res
+end
+
+function get_turtles_y(ids,by)
+    local pos=get_turtles_pos(ids, nil,by,nil)
+    local ys={}
+    for k,v in pairs(by) do
+        ys[k]=pos[k][2]
+    end
+    return ys
+end
+
+function get_turtles_y_diff(ids, heights)
+    local res=get_turtles_y(ids)
+    for k,v in pairs(res) do
+        res[k]=heights[k]-res[k]
+    end
+    return res
+end
+
+
 function refuel_turtles()
+    -- hard shit
     local rpc={command={'refuel'}, args={}}
     for i,tid in pairs(turtles) do
         local res=rpc_call(tid, rpc)
         
     end
-end   
+end
 
 
 function create_arr(len, val)
@@ -124,13 +123,15 @@ function create_matrix(r, c, val)
     return m
 end
 
-function rpc_call(tid, rpc, Protocol)
-    rednet.send(tid, rpc, Protocol)
+function rpc_call(tid, rpc, protocol)
+    protocol=protocol or PTC
+    rednet.send(tid, rpc, protocol)
     local id,mes=recv(tid)
-    return mes
+    return id,mes
 end
-function rpc_all(ids, rpc, reverse, protocol)
+function rpc_all(ids, rpc, protocol, reverse)
     local res_list={}
+    local res_ids={}
     reverse=reverse or false
     if not reverse then
     for i, tid in pairs(ids) do
@@ -140,10 +141,9 @@ function rpc_all(ids, rpc, reverse, protocol)
     local tid
     for i=#ids, 1, -1 do
         tid=ids[i]
-        res_list[tid]=rpc_call(tid, rpc, protocol)
+        res_ids[tid],res_list[tid]=rpc_call(tid, rpc, protocol)
     end
-    sleep(0.1)
-    return res_list
+    return res_ids,res_list
 end
 
 function set_blueprint(bp)
@@ -151,32 +151,35 @@ function set_blueprint(bp)
     _G.bx,_G.by,_G.bz=bp.base_x,bp.base_y,bp.base_z
 end
 
-function load_blueprint(path)
+function load_json(path)
     local fp = fs.open(path, 'r')
     local bp = textutils.unserialiseJSON(fp.readAll())
-    set_blueprint(bp)
+    return bp
 end
 
 function init_blueprint(bp, x,y,z)
     --_G.bp=bp
     
     bp.mat_map=bp['material_data'][1] -- y,x,z -> x,z
-    bp.height_map=bp['height_data'][1]
-    bp.state='line-done' -- the work currently doing
+    bp.y_map=bp['height_data'][1]
+    bp.state='initiated' -- the work currently doing
+    bp.tids={} -- turtle ids
     bp.tcount=1 -- the turtle count
+    bp.tys={}
+
     -- check-supply
-    -- move-forward
+    -- move-forward / move-z
     -- move-height
-    -- placedown
+    -- place
     -- line-done (calculate new p-xyz, determine zdir...)
     -- back to check-supply...
 
     -- all-done
 
     -- the world coordinate
-    bp.base_x=x
-    bp.base_y=y
-    bp.base_z=z
+    bp.bx=x
+    bp.by=y
+    bp.bz=z
     --initial processing position
     bp.px=1
     bp.py=1
@@ -193,10 +196,81 @@ function init_blueprint(bp, x,y,z)
 end
 
 function process_bp(bp)
+    local res
+    if bp.state=='initiated' then
+        bp.state='move-forward-check'
 
+    -- forward
+    elseif bp.state=='move-forward-check' then
+        while not check_turtles_FuelLevel(bp.tids, 1) do
+            print('move-forward-check failed')
+            print('turtle need refuel')
+            sleep(5)
+        end
+        bp.state='move-forward'
+    elseif bp.state=='move-forward' then
+        res=move_all(bp.tids, 'forward')
+        if res==false then return false end
+
+        bp.state='move-height-check'
+
+    -- z
+    elseif bp.state=='move-z-check' then
+        while not check_turtles_FuelLevel(bp.tids, bp.tcount) do
+            print('move-z-check failed')
+            print('turtle need refuel')
+            sleep(5)
+        end
+        bp.state='move-z'
+    elseif bp.state=='move-z' then
+        local turn_dir
+        if bp.zdir then
+            turn_dir='turnRight'
+        else
+            turn_dir='turnLeft'
+        end
+        res=move_all(bp.tids, turn_dir)
+        if not res then return false end
+        res=move_all(bp.tids, 'forward', bp.tcount)
+        if not res then return false end
+        res=move_all(bp.tids, turn_dir)
+        if not res then return false end
+
+        if bp.zdir then bp.zdir=false else bp.zdir=true end
+        bp.state='move-height-check'
+    -- y
+    elseif bp.state=='move-y-check' then
+        bp.y_diff=get_turtles_y_diff(bp.tids, bp.y_map)
+        while not check_turtles_each_FuelLevel(bp.tids, bp.y_diff) do
+            print('move-z-check failed')
+            print('turtle need refuel')
+            sleep(5)
+        end
+        bp.state='move-y'
+    elseif bp.state=='move-y' then
+        
+        local res=move_y(bp.tids, bp.y_map)
+        if res==false then return false end
+        bp.state='place-check'
+
+    elseif bp.state=='place-check'
+    bp.state='place'
+
+    elseif bp.state=='place' then
+
+        bp.state='line-done'
+    elseif bp.state=='line-done' then
+        -- determine move-forward or move-z
+
+        
+
+    else
+        error('unexpected bp state')
+    end
+    return true
 end
 
-function dump(path, obj)
+function dump_json(path, obj)
     local fp=fs.open(path,'w')
     fp.write(textutils.serialiseJSON(obj))
     fp.close()
@@ -207,13 +281,7 @@ function build_line(bp)
     if bp==nil then
         bp=_G.bp
     end
-    -- check fuel to height
-    -- check fuel to forward
-    -- check material supply
-    -- all good then
-    -- move to height
-    -- move forward
-    -- place block below
+
 
 end
 function buildline_check(bp)
@@ -221,113 +289,47 @@ function buildline_check(bp)
 
 end
 
-function move_all(ids,x,y,z)
-    -- move all together
-    -- use this instead of [for-loop move] to prevent blocking
-    -- x,y,z are diff.
-    -- return true if success
-    -- this assume fuel is enough
-    x=x or 0
-    y=y or 0
-    z=z or 0
-    local nx,ny,nz=(x<0),(y<0),(z<0)
+function move_all(ids, direction, dist)
+    direction=direction or 'forward'
+    dist=dist or 1
     local rpc={
-        command={'turtle', ''}
-    }    
-    for i=1, x do
-        if nx then -- go north(facing)
-            rpc.command[2]='forward'
-        else
-            rpc.command[2]='back'
-        end
-        rpc_all(ids, rpc, true)--reverse call
-        sleep(1)
+        command={'turtle', direction}
+    }
+
+    for i=1, dist do
+       rpc_all(ids, rpc) 
     end
-    for i=1, y do
-        if ny then -- go down
-            rpc.command[2]='down'
-        else
-            rpc.command[2]='up'
-        end
-        rpc_all(ids, rpc, true)
-        sleep(1)
-    end
-    for i=1, z do
-        if nz then -- go west
-            rpc.command[2]='left'
-        else
-            rpc.command[2]='right'
-        end
-        rpc_all(ids, rpc, true)
-        sleep(1)
-    end
+
 end
 
-function move(id, x,y,z)do
-    x=x or 0
-    y=y or 0
-    z=z or 0
-    local nx,ny,nz=(x<0),(y<0),(z<0)
+function move(id, direction, dist)do
+    direction=direction or 'forward'
+    dist=dist or 1
     local rpc={
-        command={'turtle', ''}
-    }    
-    for i=1, x do
-        if nx then -- go north(facing)
-            rpc.command[2]='forward'
-        else
-            rpc.command[2]='back'
+        command={'turtle', direction}
+    }
+    local rid, mes
+    for i=1, dist do
+        rid,mes=rpc_call(id,rpc)
+        if rid==nil then
+            return false
         end
-        rpc_call(id, rpc)
-        sleep(1)
     end
-    for i=1, y do
-        if ny then -- go down
-            rpc.command[2]='down'
-        else
-            rpc.command[2]='up'
-        end
-        rpc_call(id, rpc)
-        sleep(1)
-    end
-    for i=1, z do
-        if nz then -- go west
-            rpc.command[2]='left'
-        else
-            rpc.command[2]='right'
-        end
-        rpc_call(id, rpc)
-        sleep(1)
-    end
+    return true
 end
 
-function move_all_to_xz(ids,x,z)
-    -- this take absoulte position
-    -- move y then z then x 
-    -- move large to small id to prevent collision
-    local pos_data=get_turtles_pos()
-    local dx=x-pos_data[1][1]
-    local dz=z-pos_data[1][3]
-    return move_all(ids,dx, 0, dz)
-end
-
-function move_to_y(id, y)
-    -- in progress, height will be different
-    -- but use move_all_to_y will be more efficient
-    local pos_data=get_turtles_pos()
-    local dy=y-pos_data[1][2]
-    return move(id, 0,y,0)
-end
-
-function move_all_to_y(ids, y)
-    local dy
-    local pos_data=get_turtles_pos()
-    local res={}
-    for i, tid in pairs(ids) do
-        dy=y-pos_data[tid]
-        res[tid]=move(tid, 0,dy,0)
+function move_y(ids, ys)
+    -- ys is each dist
+    for i, id in pairs(ids) do
+        if ys[i]>0 then
+            move(id, 'Up', ys[i])
+        elseif y[i]<0 then
+            move(id, 'Down', math.abs(ys[i]))
+        end
     end
-    return res
+    return true
 end
+
 
 function recv(tid)
     local id, mes
