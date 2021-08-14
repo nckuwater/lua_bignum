@@ -3,6 +3,50 @@ local PTC='test'
 local HostName='controller'
 
 
+function create_arr(len, val)
+    local m={}
+    val=val or 0
+    for i=1, len do
+        m[i]=val
+    end
+    return m
+end
+
+function create_matrix(r, c, val)
+    val=val or 0
+    local m = {}
+    for i=1, r do
+        m[i]={}
+        for j=1, c do
+            m[i][j]=val
+        end
+    end
+    return m
+end
+
+function rpc_call(tid, rpc, protocol)
+    protocol=protocol or PTC
+    rednet.send(tid, rpc, protocol)
+    local id,mes=recv(tid)
+    return id,mes
+end
+function rpc_all(ids, rpc, protocol, reverse)
+    local res_list={}
+    local res_ids={}
+    reverse=reverse or false
+    if not reverse then
+        for i, tid in pairs(ids) do
+            res_ids[tid],res_list[tid]=rpc_call(tid, rpc, protocol)
+        end
+    else
+        local tid
+        for i=#ids, 1, -1 do
+            tid=ids[i]
+            res_ids[tid],res_list[tid]=rpc_call(tid, rpc, protocol)
+        end
+    return res_ids,res_list
+end
+
 function get_turtles_pos(ids, bx,by,bz)
     bx=bx or 1
     by=by or 1
@@ -139,51 +183,6 @@ function refuel_turtles()
     end
 end
 
-
-function create_arr(len, val)
-    local m={}
-    val=val or 0
-    for i=1, len do
-        m[i]=val
-    end
-    return m
-end
-
-function create_matrix(r, c, val)
-    val=val or 0
-    local m = {}
-    for i=1, r do
-        m[i]={}
-        for j=1, c do
-            m[i][j]=val
-        end
-    end
-    return m
-end
-
-function rpc_call(tid, rpc, protocol)
-    protocol=protocol or PTC
-    rednet.send(tid, rpc, protocol)
-    local id,mes=recv(tid)
-    return id,mes
-end
-function rpc_all(ids, rpc, protocol, reverse)
-    local res_list={}
-    local res_ids={}
-    reverse=reverse or false
-    if not reverse then
-        for i, tid in pairs(ids) do
-            res_ids[tid],res_list[tid]=rpc_call(tid, rpc, protocol)
-        end
-    else
-        local tid
-        for i=#ids, 1, -1 do
-            tid=ids[i]
-            res_ids[tid],res_list[tid]=rpc_call(tid, rpc, protocol)
-        end
-    return res_ids,res_list
-end
-
 function set_blueprint(bp)
     _G.bp=bp
     _G.bx,_G.by,_G.bz=bp.base_x,bp.base_y,bp.base_z
@@ -199,13 +198,12 @@ function init_blueprint(bp, x,y,z)
     --_G.bp=bp
     
     bp.mat_map=bp['material_data'][1] -- y,x,z -> x,z
-    bp.mat_dict=bp['material_dict']
+    bp.mat_dict=bp['palette']
     -- real block_id = bp.material_dict[mat_map[y][x][z]]
     bp.y_map=bp['height_data'][1]
     bp.state='initiated' -- the work currently doing
     bp.tids={} -- turtle ids
     bp.tcount=1 -- the turtle count
-    bp.tys={}
 
     -- the world coordinate
     bp.bx=x
@@ -223,7 +221,7 @@ function init_blueprint(bp, x,y,z)
     -- process args
     bp.zdir=true -- true if positive z
 
-    
+    return bp
 end
 
 function process_bp(bp)
@@ -243,17 +241,17 @@ function process_bp(bp)
         res=move_all(bp.tids, 'forward')
         if res==false then return false end
 
-        bp.state='move-height-check'
+        bp.state='move-y-check'
 
     -- z
-    elseif bp.state=='move-z-check' then
+    elseif bp.state=='move-x-check' then
         while not check_turtles_FuelLevel(bp.tids, bp.tcount) do
-            print('move-z-check failed')
+            print('move-x-check failed')
             print('turtle need refuel')
             sleep(20)
         end
-        bp.state='move-z'
-    elseif bp.state=='move-z' then
+        bp.state='move-x'
+    elseif bp.state=='move-x' then
         local turn_dir
         if bp.zdir then
             turn_dir='turnRight'
@@ -267,14 +265,16 @@ function process_bp(bp)
         res=move_all(bp.tids, turn_dir)
         if not res then return false end
 
+        -- reverse bp.zdir
         if bp.zdir then bp.zdir=false else bp.zdir=true end
-        bp.state='move-height-check'
+
+        bp.state='move-y-check'
 
     -- y
     elseif bp.state=='move-y-check' then
         bp.y_diff=get_turtles_y_diff(bp.tids, bp.y_map)
         while not check_turtles_each_FuelLevel(bp.tids, bp.y_diff) do
-            print('move-z-check failed')
+            print('move-y-check failed')
             print('turtle need refuel')
             sleep(20)
         end
@@ -298,10 +298,36 @@ function process_bp(bp)
 
         bp.state='line-done'
     elseif bp.state=='line-done' then
-        -- determine move-forward or move-z
-
+        -- determine move-forward or move-x
+        if (bp.zdir and bp.pz>=bp.size.z) or ((not bp.zdir) and bp.pz<=1) then
+            -- z done
+            if (bp.px+bp.tcount-1)>=bp.size.x then
+                -- xz done
+                if bp.py==bp.size.y then
+                    -- all-done
+                    bp.state='all-done'
+                else
+                    -- move to next y
+                    -- current no need
+                    -- need to add function that move all turtles back to 1,py,1
+                    -- need to change mat_map, height_map
+                    bp.py=bp.py+1
+                    bp.px=1
+                    bp.pz=1
+                    bp.state='move-forward-check'
+                end
+            else
+                -- z done x not
+                -- move to next x
+                bp.px=bp.px+tcount
+                bp.state='move-x-check'
+            end
+        else
+            -- z not done
+            bp.pz=bp.pz+1
+            bp.state='move-forward-check'
+        end
         
-
     else
         error('unexpected bp state')
     end
@@ -315,17 +341,6 @@ function dump_json(path, obj)
     return true
 end
 
-function build_line(bp)
-    if bp==nil then
-        bp=_G.bp
-    end
-
-
-end
-function buildline_check(bp)
-    if bp==nil then bp=_G.bp end
-
-end
 
 function move_all(ids, direction, dist)
     direction=direction or 'forward'
@@ -383,13 +398,14 @@ function refuel_all(ids)
     move_all_to_y(ids, bp)
 end
 
---listen_turtle_register()
-local res = get_turtles_pos()
-print(textutils.serialise(res))
---print(textutils.unserialise(res))
-res = get_turtles_FuelLevel()
-print(textutils.serialise(res))
-refuel_turtles()
-rednet.unhost(PTC)
-local need_refuel=check_turtles_FuelLevel(200)
-print(need_refuel)
+function main()
+    local path=''
+    local bp=load_json(path)
+    init_blueprint(bp)
+    bp.tids={}
+    bp.tcount=0
+    while bp.state~='all-done' do
+        process_bp(bp)
+        print('current state:', bp.state)
+    end
+end
