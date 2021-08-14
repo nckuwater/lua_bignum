@@ -1,4 +1,4 @@
-local MODEM_SIDE='right'
+local MODEM_SIDE='back'
 local PTC='test'
 local RECV_TIMEOUT=2
 --local HostName='controller'
@@ -339,18 +339,20 @@ function process_bp(bp)
         else
             turn_dir='turnRight'
         end
-        res=move_all(bp.tids, turn_dir)
+        res=move_all(bp.tids, 'forward')
+        res=move_all_safe(bp.tids, turn_dir)
         if not res then return false end
-        res=move_all(bp.tids, 'forward', bp.tcount)
+        res=move_all_safe(bp.tids, 'forward', bp.tcount)
         if not res then return false end
-        res=move_all(bp.tids, turn_dir)
+        res=move_all_safe(bp.tids, turn_dir)
         if not res then return false end
 
         -- reverse bp.zdir
         if bp.zdir then bp.zdir=false else bp.zdir=true end
 
+        bp.px=bp.px+bp.tcount
         
-        bp.state='move-y-check'
+        bp.state='forward-collide-check'
         save(bp)
     -- y
     elseif bp.state=='move-y-check' then
@@ -422,12 +424,16 @@ function process_bp(bp)
             else
                 -- z done x not
                 -- move to next x
-                bp.px=bp.px+bp.tcount
+                --bp.px=bp.px+bp.tcount
                 bp.state='move-x-check'
             end
         else
             -- z not done
-            bp.pz=bp.pz+1
+            if bp.zdir then
+                bp.pz=bp.pz+1
+            else 
+                bp.pz=bp.pz-1
+            end
             bp.state='forward-collide-check'
         end
         
@@ -458,6 +464,21 @@ function move_all(ids, direction, dist)
 
     for i=1, dist do
        rpc_all(ids, rpc) 
+    end
+    return true
+end
+
+function move_all_safe(ids, direction, dist)
+    direction=direction or 'forward'
+    dist=dist or 1
+    local rpc={
+        command={'turtle', direction}
+    }
+    for i=#ids, 1, -1 do
+        for k=1, dist do
+            --rpc_all(ids, rpc) 
+            rpc_call(ids[i], rpc)
+        end
     end
     return true
 end
@@ -533,6 +554,11 @@ function reset_pos(bp)
     bp.py=pos[2]
     bp.pz=pos[3]
     print('reset to', bp.px,bp.py,bp.pz)
+    if math.floor((bp.px-1)/bp.tcount)%2==0 then
+        bp.zdir=true
+    else
+        bp.zdir=false
+    end
     bp.state='line-done'
     save(bp)
 end
