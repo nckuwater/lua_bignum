@@ -70,8 +70,35 @@ function get_turtle_inventory(id,detail)
         command={'get_inventory_list'},
         args={detail}
     }
-    local res=rpc_call(id, rpc)
+    local id,res=rpc_call(id, rpc)
+    if res~=nil then res=res[1] end
     return res
+end
+function count_turtle_item(id, item)
+    local items=get_turtle_inventory(id)
+    local count=0
+    for k,v in pairs(items) do
+        if v~=nil then
+            if v.name==item then
+                count=count+v.count
+            end
+        end
+    end
+    return count
+end
+function check_turtles_item(ids, items, count)
+    count=count or 1
+    local res, ic
+    res=true
+    fail_ids={}
+    for i,id in pairs(ids) do
+        ic=count_turtle_item(id, items[i])
+        if ic<count then
+            res=false
+            table.insert(fail_ids, id)
+        end
+    end
+    return res, fail_ids
 end
 
 function get_turtles_y(ids,by)
@@ -87,6 +114,17 @@ function get_turtles_y_diff(ids, heights)
     local res=get_turtles_y(ids)
     for k,v in pairs(res) do
         res[k]=heights[k]-res[k]
+    end
+    return res
+end
+
+function get_mat_list(bp)
+    local res={}
+    for i=1, bp.tcount do
+        res[i]=bp.mat_map[bp.px+i-1][bp.pz]
+    end
+    for i=1, bp.tcount do 
+        res[i]=bp.mat_dict[res[i]]
     end
     return res
 end
@@ -134,15 +172,15 @@ function rpc_all(ids, rpc, protocol, reverse)
     local res_ids={}
     reverse=reverse or false
     if not reverse then
-    for i, tid in pairs(ids) do
-        res_list[tid]=rpc_call(tid, rpc, protocol)
-    end
+        for i, tid in pairs(ids) do
+            res_ids[tid],res_list[tid]=rpc_call(tid, rpc, protocol)
+        end
     else
-    local tid
-    for i=#ids, 1, -1 do
-        tid=ids[i]
-        res_ids[tid],res_list[tid]=rpc_call(tid, rpc, protocol)
-    end
+        local tid
+        for i=#ids, 1, -1 do
+            tid=ids[i]
+            res_ids[tid],res_list[tid]=rpc_call(tid, rpc, protocol)
+        end
     return res_ids,res_list
 end
 
@@ -161,20 +199,13 @@ function init_blueprint(bp, x,y,z)
     --_G.bp=bp
     
     bp.mat_map=bp['material_data'][1] -- y,x,z -> x,z
+    bp.mat_dict=bp['material_dict']
+    -- real block_id = bp.material_dict[mat_map[y][x][z]]
     bp.y_map=bp['height_data'][1]
     bp.state='initiated' -- the work currently doing
     bp.tids={} -- turtle ids
     bp.tcount=1 -- the turtle count
     bp.tys={}
-
-    -- check-supply
-    -- move-forward / move-z
-    -- move-height
-    -- place
-    -- line-done (calculate new p-xyz, determine zdir...)
-    -- back to check-supply...
-
-    -- all-done
 
     -- the world coordinate
     bp.bx=x
@@ -205,7 +236,7 @@ function process_bp(bp)
         while not check_turtles_FuelLevel(bp.tids, 1) do
             print('move-forward-check failed')
             print('turtle need refuel')
-            sleep(5)
+            sleep(20)
         end
         bp.state='move-forward'
     elseif bp.state=='move-forward' then
@@ -219,7 +250,7 @@ function process_bp(bp)
         while not check_turtles_FuelLevel(bp.tids, bp.tcount) do
             print('move-z-check failed')
             print('turtle need refuel')
-            sleep(5)
+            sleep(20)
         end
         bp.state='move-z'
     elseif bp.state=='move-z' then
@@ -238,23 +269,30 @@ function process_bp(bp)
 
         if bp.zdir then bp.zdir=false else bp.zdir=true end
         bp.state='move-height-check'
+
     -- y
     elseif bp.state=='move-y-check' then
         bp.y_diff=get_turtles_y_diff(bp.tids, bp.y_map)
         while not check_turtles_each_FuelLevel(bp.tids, bp.y_diff) do
             print('move-z-check failed')
             print('turtle need refuel')
-            sleep(5)
+            sleep(20)
         end
         bp.state='move-y'
+
     elseif bp.state=='move-y' then
-        
         local res=move_y(bp.tids, bp.y_map)
         if res==false then return false end
         bp.state='place-check'
 
     elseif bp.state=='place-check'
-    bp.state='place'
+        local mat_list=get_mat_list(bp)
+        while not check_turtles_item(bp.tids, mat_list, 1) do
+            print('place-check failed')
+            print('turtle need mat')
+            sleep(20)
+        end
+        bp.state='place'
 
     elseif bp.state=='place' then
 
