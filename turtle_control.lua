@@ -35,6 +35,7 @@ function rpc_all(ids, rpc, protocol, reverse)
     local res_list={}
     local res_ids={}
     reverse=reverse or false
+    local wraps={}
     if not reverse then
         for i, tid in pairs(ids) do
             res_ids[tid],res_list[tid]=rpc_call(tid, rpc, protocol)
@@ -43,9 +44,14 @@ function rpc_all(ids, rpc, protocol, reverse)
         local tid
         for i=#ids, 1, -1 do
             tid=ids[i]
-            res_ids[tid],res_list[tid]=rpc_call(tid, rpc, protocol)
+            wraps.insert(function()
+                sleep(i)
+                res_ids[tid],res_list[tid]=rpc_call(tid, rpc, protocol)
+            end
+            )
         end
     end
+    parallel.waitForAll(unpack(wraps))
     return res_ids,res_list
 end
 
@@ -64,7 +70,7 @@ function get_turtles_pos(ids, bx,by,bz)
         mes[1]=mes[1]-bx+1
         mes[2]=mes[2]-by+1
         mes[3]=mes[3]-bz+1
-        pos_data[tid]=mes
+        pos_data[i]=mes
         print(mes)
         print(textutils.serialise(mes))
     end
@@ -79,7 +85,7 @@ function get_turtles_FuelLevel(ids)
             args={}
         }
         local id,fuel=rpc_call(tid, rpc)
-        fuel_data[tid]=fuel
+        fuel_data[i]=fuel
     end
     print(textutils.serialise(fuel_data))
     return fuel_data
@@ -109,6 +115,20 @@ function check_turtles_each_FuelLevel(ids, low_lines)
     return true
 end
 
+function check_forward_collide(ids)
+    local rpc={
+        command={'turtle', 'inspect'}
+    }
+    local ids, mes=rpc_all(ids, rpc)
+    for i,insp in pairs(mes) do
+        local has_block=insp[1]
+        local data=insp[2]
+        if has_block then
+            return false
+        end
+    end
+    return true
+end
 
 function get_turtle_inventory(id,detail)
     detail=detail or false
@@ -151,9 +171,9 @@ function send_place_check_info(fails)
         command={'print'},
         args={}
     }
-    for tid, mat in fails do
-        rpc.args[1]=mat
-        rpc_call(tid, rpc)
+    for i, fail in pairs(fails) do
+        rpc.args[1]=fail[2]
+        rpc_call(fail[1], rpc)
     end
 end
 
@@ -168,8 +188,8 @@ function get_turtles_y(ids,by)
     return ys
 end
 
-function get_turtles_y_diff(ids, heights)
-    local res=get_turtles_y(ids)
+function get_turtles_y_diff(ids, by, heights)
+    local res=get_turtles_y(ids, by)
     print('tury')
     print(textutils.serialise(res))
     for k,v in pairs(res) do
@@ -188,6 +208,30 @@ function get_mat_list(bp)
     end
     return res
 end
+function get_y_list(bp)
+    local res={}
+    for i=1, bp.tcount do
+        res[i]=bp.y_map[bp.px+i-1][bp.pz]
+    end
+    return res
+end
+function send_total_mat_need(bp)
+    local tn = bp['turtle_mat_need']
+    local rpc = {
+        command={'print'},
+        args={}
+    }
+    local text
+    for i, tid in pairs(bp['tids']) do
+        text=''
+        for item,count in pairs(tn[i]) do
+            text = text..item..' '..tostring(count)..'\n'
+        end
+        rpc.args[1] = text
+        rpc_call(tid, rpc)
+    end
+    return true
+end
 
 
 function refuel_turtles()
@@ -199,10 +243,6 @@ function refuel_turtles()
     end
 end
 
-function set_blueprint(bp)
-    _G.bp=bp
-    _G.bx,_G.by,_G.bz=bp.base_x,bp.base_y,bp.base_z
-end
 
 function load_json(path)
     local fp = fs.open(path, 'r')
@@ -210,13 +250,25 @@ function load_json(path)
     return bp
 end
 
-function init_blueprint(bp, x,y,z)
-    --_G.bp=bp
-    
+function load_blueprint(bp)
+    -- rename some member
+
     bp.mat_map=bp['material_data'] -- y,x,z -> x,z
     bp.mat_dict=bp['palette']
+
     -- real block_id = bp.material_dict[mat_map[y][x][z]]
-    bp.y_map=bp['height_data'][1]
+
+    bp.y_map=bp['height_data']
+    return bp
+end
+function unload_blueprint(bp)
+    bp.mat_map=nil
+    bp.mat_dict=nil
+    bp.y_map=nil
+    return bp
+end
+
+function init_blueprint(bp, x,y,z)
     bp.state='initiated' -- the work currently doing
     bp.tids={} -- turtle ids
     bp.tcount=1 -- the turtle count
@@ -243,36 +295,49 @@ end
 function process_bp(bp)
     local res
     if bp.state=='initiated' then
-        bp.state='move-forward-check'
+        bp.state='forward-collide-check'
 
+    elseif bp.state=='forward-collide-check' then
+        if check_forward_collide(bp.tids) then
+            bp.state='move-forward-check'
+        else
+            bp.state='forward-collide-adjust'
+        end
+
+    elseif bp.state=='forward-collide-adjust' then
+        move_all(bp.tids, 'up')
+        --sleep(1)
+        bp.state='forward-collide-check'
+        save(bp)
     -- forward
     elseif bp.state=='move-forward-check' then
         while not check_turtles_FuelLevel(bp.tids, 1) do
             print('move-forward-check failed')
             print('turtle need refuel')
-            sleep(20)
+            sleep(10)
         end
         bp.state='move-forward'
     elseif bp.state=='move-forward' then
         res=move_all(bp.tids, 'forward')
         if res==false then return false end
 
+        
         bp.state='move-y-check'
-
+        save(bp)
     -- z
     elseif bp.state=='move-x-check' then
         while not check_turtles_FuelLevel(bp.tids, bp.tcount) do
             print('move-x-check failed')
             print('turtle need refuel')
-            sleep(20)
+            sleep(10)
         end
         bp.state='move-x'
     elseif bp.state=='move-x' then
         local turn_dir
         if bp.zdir then
-            turn_dir='turnRight'
-        else
             turn_dir='turnLeft'
+        else
+            turn_dir='turnRight'
         end
         res=move_all(bp.tids, turn_dir)
         if not res then return false end
@@ -284,28 +349,36 @@ function process_bp(bp)
         -- reverse bp.zdir
         if bp.zdir then bp.zdir=false else bp.zdir=true end
 
+        
         bp.state='move-y-check'
-
+        save(bp)
     -- y
     elseif bp.state=='move-y-check' then
-        bp.y_diff=get_turtles_y_diff(bp.tids, bp.y_map)
+        bp.y_list=get_y_list(bp)
+        bp.y_diff=get_turtles_y_diff(bp.tids, bp.by, bp.y_list)
+        for k,v in pairs(bp.y_diff) do
+            bp.y_diff[k]=v+2
+        end
         while not check_turtles_each_FuelLevel(bp.tids, bp.y_diff) do
             print('move-y-check failed')
             print('turtle need refuel')
-            sleep(20)
+            sleep(10)
         end
 
         bp.state='move-y'
 
     elseif bp.state=='move-y' then
-        local res=move_y(bp.tids, bp.y_map)
+        print(textutils.serialise(bp.y_diff))
+        local res=move_y(bp.tids, bp.y_diff)
         if res==false then return false end
-        bp.state='place-check'
 
+        
+        bp.state='place-check'
+        save(bp)
     elseif bp.state=='place-check' then
         local mat_list=get_mat_list(bp)
-        local res, fails=check_turtles_item(bp,
-                         tids, mat_list, 1)
+        bp.mat_list=mat_list
+        local res, fails=check_turtles_item(bp.tids, mat_list, 1)
         if not res then
             send_place_check_info(fails)
         end
@@ -316,13 +389,17 @@ function process_bp(bp)
             if not res then
                 send_place_check_info(fails)
             end
-            sleep(20)
+            sleep(10)
         end
         bp.state='place'
 
     elseif bp.state=='place' then
+        place_down_all(bp.tids, bp.mat_list)
 
+        
         bp.state='line-done'
+        save(bp)
+
     elseif bp.state=='line-done' then
         -- determine move-forward or move-x
         if (bp.zdir and bp.pz>=bp.size.z) or ((not bp.zdir) and bp.pz<=1) then
@@ -340,18 +417,18 @@ function process_bp(bp)
                     bp.py=bp.py+1
                     bp.px=1
                     bp.pz=1
-                    bp.state='move-forward-check'
+                    bp.state='forward-collide-check'
                 end
             else
                 -- z done x not
                 -- move to next x
-                bp.px=bp.px+tcount
+                bp.px=bp.px+bp.tcount
                 bp.state='move-x-check'
             end
         else
             -- z not done
             bp.pz=bp.pz+1
-            bp.state='move-forward-check'
+            bp.state='forward-collide-check'
         end
         
     else
@@ -359,7 +436,11 @@ function process_bp(bp)
     end
     return true
 end
-
+function save(bp)
+    unload_blueprint(bp)
+    dump_json(bp.path, bp)
+    load_blueprint(bp)
+end
 function dump_json(path, obj)
     local fp=fs.open(path,'w')
     fp.write(textutils.serialiseJSON(obj))
@@ -378,7 +459,7 @@ function move_all(ids, direction, dist)
     for i=1, dist do
        rpc_all(ids, rpc) 
     end
-
+    return true
 end
 
 function move(id, direction, dist)
@@ -409,6 +490,20 @@ function move_y(ids, ys)
     return true
 end
 
+function place_down_all(tids, mat_list)
+    local rpc={
+        command={'place_down'},
+        args={}
+    }
+    local id,mes
+    for k,v in pairs(mat_list) do
+        rpc.args[1]=v
+        id,mes=rpc_call(tids[k], rpc)
+        if id==nil then return false end
+    end
+    return true
+end
+
 
 function recv(tid)
     local id, mes
@@ -417,24 +512,62 @@ function recv(tid)
     end
     return id, mes
 end
+function send(tid, mes, protocol)
+    rednet.send(tid, mes, protocol or PTC)
+end
 
 function refuel_all(ids)
     --move all to the max_height+1
     --go back to 0,0,length+1
     move_all_to_y(ids, bp)
 end
+function return_pos(bp)
+    local pos=get_turtles_pos(bp.tids, bp.bx,bp.by,bp.bz)
+    pos=pos[1]
+    move_all(bp.tids, 'back', pos[3])
+end
+function reset_pos(bp)
+    local pos=get_turtles_pos(bp.tids, bp.bx,bp.by,bp.bz)
+    pos=pos[1]
+    bp.px=pos[1]
+    bp.py=pos[2]
+    bp.pz=pos[3]
+    print('reset to', bp.px,bp.py,bp.pz)
+    bp.state='line-done'
+    save(bp)
+end
 
 function main()
-    local path='bp'
+    local path='bp2'
     local bp=load_json(path)
-    init_blueprint(bp)
-    bp.tids={3,2,1}
-    bp.tcount=3
-    while bp.state~='all-done' do
-        print('process')
-        print('current state:', bp.state)
-        process_bp(bp)
-        read()
+    
+    if arg[1]=='init' then
+        init_blueprint(bp,-64,4,-321)
+        bp.tids={3,2,11}
+        bp.tcount=3
+        bp.path=path
+        dump_json(path, bp)
+        print('init success')
+    elseif arg[1]=='req' then
+        bp=load_blueprint(bp)
+        send_total_mat_need(bp)
+    elseif arg[1]=='back' then
+        bp=load_blueprint(bp)
+        return_pos(bp)
+    elseif arg[1]=='reset' then
+        bp=load_blueprint(bp)
+        reset_pos(bp)
+    elseif arg[1]==nil then
+        bp=load_blueprint(bp)
+        while bp.state~='all-done' do
+            print('process')
+            print('current state:', bp.state)
+            process_bp(bp)
+            save(bp)
+            --read()
+        end
+    else
+        print('no command')
     end
 end
 main()
