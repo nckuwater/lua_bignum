@@ -140,6 +140,41 @@ function get_turtle_inventory(id,detail)
     if res~=nil then res=res[1] end
     return res
 end
+function get_turtles_inventory(ids, detail)
+    local res = {}
+    for i, id in pairs(ids) do
+        res[i] = get_turtle_inventory(id, detail)
+    end
+    return res
+end
+function get_turtle_inventory_items(id,detail)
+    -- convert to items format [mat:count]
+    detail=detail or false
+    local rpc={
+        command={'get_inventory_list'},
+        args={detail}
+    }
+    local id,res=rpc_call(id, rpc)
+    local items={}
+    if res~=nil then 
+        res=res[1] 
+        for i, item in pairs(res) do
+            items[item.name] = item.count
+        end
+    end
+    --return res
+    return items
+end
+
+function get_turtles_inventory_items()
+    -- convert to items format [mat:count]
+    local res = {}
+    for i, id in pairs(ids) do
+        res[i] = get_turtle_inventory_items(id, detail)
+    end
+    return res
+end
+
 function count_turtle_item(id, item)
     local items=get_turtle_inventory(id)
     local count=0
@@ -175,6 +210,14 @@ function send_place_check_info(fails)
         rpc.args[1]=fail[2]
         rpc_call(fail[1], rpc)
     end
+end
+function print_to(id, text)
+    local rpc={
+        command={'print'},
+        args={text}
+    }
+    local id,mes=rpc_call(id, rpc)
+    return id,mes
 end
 
 function get_turtles_y(ids,by)
@@ -231,6 +274,61 @@ function send_total_mat_need(bp)
         rpc_call(tid, rpc)
     end
     return true
+end
+
+function check_material_list(rec, items)
+    -- rec is recipe(required materials)
+    -- items is current obtained
+    local rec_remain = {}
+    for k,v in pairs(rec) do
+        if items[k] ~= nil then
+            if rec[k] > items[k] then
+                rec_remain[k] = rec[k]-items[k]
+            end
+        else
+            rec_remain[k] = rec[k]
+        end
+    end
+    return rec_remain
+end
+
+function get_turtle_chunk_mat(bp)
+    local sup_index = bp['supply_index']
+    local sup_plan = bp['supply_plan']
+    local chunk = math.ceil(bp.px / bp.tcount)
+    -- find the next supply chunk
+    local sup_chunk_index = nil
+    for k,v in pairs(sup_index) do
+        if chunk <= v then
+            sup_chunk_index = k
+            break
+        end
+    end
+    print('sup ind', bp.px, chunk)
+    print(textutils.serialise(sup_index))
+    if sup_chunk_index==nil then return nil end -- no need sup
+    return sup_plan[sup_chunk_index]
+end
+function get_turtle_chunk_missing(bp)
+    local chunk_sup = get_turtle_chunk_mat(bp)
+    local turtle_sup = get_turtles_inventory(bp.tids)
+    local missing_sup = {}
+    print(textutils.serialise(chunk_sup))
+    for i, tid in pairs(bp.tids) do
+        missing_sup[i] = check_material_list(chunk_sup[i], turtle_sup[i])
+    end
+    return missing_sup
+end
+function send_chunk_mat_missing(bp)
+    -- send info about item required for each turtle
+    local missing_sup = get_turtle_chunk_missing(bp)
+    local tid
+    for i, ms in pairs(missing_sup) do
+        if ms~=nil then
+            tid = bp.tids[i]
+            print_to(tid, textutils.serialise(ms))
+        end
+    end
 end
 
 
@@ -314,7 +412,7 @@ function process_bp(bp)
         while not check_turtles_FuelLevel(bp.tids, 1) do
             print('move-forward-check failed')
             print('turtle need refuel')
-            sleep(10)
+            sleep(3)
         end
         bp.state='move-forward'
     elseif bp.state=='move-forward' then
@@ -329,7 +427,7 @@ function process_bp(bp)
         while not check_turtles_FuelLevel(bp.tids, bp.tcount) do
             print('move-x-check failed')
             print('turtle need refuel')
-            sleep(10)
+            sleep(3)
         end
         bp.state='move-x'
     elseif bp.state=='move-x' then
@@ -387,7 +485,7 @@ function process_bp(bp)
         while not res do
             res,fails=check_turtles_item(bp.tids, mat_list, 1)
             print('place-check failed')
-            print('turtle need mat')
+            print(textutils.serialise(fails))
             if not res then
                 send_place_check_info(fails)
             end
@@ -568,13 +666,13 @@ function main()
     local bp=load_json(path)
     
     if arg[1]=='init' then
-        init_blueprint(bp,-64,4,-321)
-        bp.tids={3,2,11}
-        bp.tcount=3
+        init_blueprint(bp,64,4,-192)
+        bp.tids={13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28}
+        bp.tcount=16
         bp.path=path
         dump_json(path, bp)
         print('init success')
-    elseif arg[1]=='req' then
+    elseif arg[1]=='allreq' then
         bp=load_blueprint(bp)
         send_total_mat_need(bp)
     elseif arg[1]=='back' then
@@ -583,6 +681,9 @@ function main()
     elseif arg[1]=='reset' then
         bp=load_blueprint(bp)
         reset_pos(bp)
+    elseif arg[1]=='mat' then
+        bp=load_blueprint(bp)
+        send_chunk_mat_missing(bp)
     elseif arg[1]==nil then
         bp=load_blueprint(bp)
         while bp.state~='all-done' do
