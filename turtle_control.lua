@@ -147,7 +147,7 @@ function get_turtles_inventory(ids, detail)
     end
     return res
 end
-function get_turtle_inventory_items(id,detail)
+function get_turtle_inventory_counts(id,detail)
     -- convert to items format [mat:count]
     detail=detail or false
     local rpc={
@@ -159,18 +159,22 @@ function get_turtle_inventory_items(id,detail)
     if res~=nil then 
         res=res[1] 
         for i, item in pairs(res) do
-            items[item.name] = item.count
+            if items[item.name]==nil then
+                items[item.name] = item.count
+            else
+                items[item.name] = items[item.name] + item.count
+            end
         end
     end
     --return res
     return items
 end
 
-function get_turtles_inventory_items()
+function get_turtles_inventory_counts(ids, detail)
     -- convert to items format [mat:count]
     local res = {}
     for i, id in pairs(ids) do
-        res[i] = get_turtle_inventory_items(id, detail)
+        res[i] = get_turtle_inventory_counts(id, detail)
     end
     return res
 end
@@ -292,16 +296,20 @@ function check_material_list(rec, items)
     return rec_remain
 end
 
-function get_turtle_chunk_mat(bp)
+function get_turtle_chunk_mat(bp, chunk)
     local sup_index = bp['supply_index']
     local sup_plan = bp['supply_plan']
-    local chunk = math.ceil(bp.px / bp.tcount)
+    if chunk==nil then
+        -- calc if not specified
+        chunk = math.ceil(bp.px / bp.tcount)
+    end
     -- find the next supply chunk
     local sup_chunk_index = nil
+    local sup_chunk = 1
     for k,v in pairs(sup_index) do
-        if chunk <= v then
+        if v<=chunk and v>=sup_chunk then
+            sup_chunk = v
             sup_chunk_index = k
-            break
         end
     end
     print('sup ind', bp.px, chunk)
@@ -309,9 +317,9 @@ function get_turtle_chunk_mat(bp)
     if sup_chunk_index==nil then return nil end -- no need sup
     return sup_plan[sup_chunk_index]
 end
-function get_turtle_chunk_missing(bp)
-    local chunk_sup = get_turtle_chunk_mat(bp)
-    local turtle_sup = get_turtles_inventory(bp.tids)
+function get_turtle_chunk_missing(bp, chunk)
+    local chunk_sup = get_turtle_chunk_mat(bp, chunk)
+    local turtle_sup = get_turtles_inventory_counts(bp.tids)
     local missing_sup = {}
     print(textutils.serialise(chunk_sup))
     for i, tid in pairs(bp.tids) do
@@ -319,9 +327,9 @@ function get_turtle_chunk_missing(bp)
     end
     return missing_sup
 end
-function send_chunk_mat_missing(bp)
+function send_chunk_mat_missing(bp, chunk)
     -- send info about item required for each turtle
-    local missing_sup = get_turtle_chunk_missing(bp)
+    local missing_sup = get_turtle_chunk_missing(bp, chunk)
     local tid
     for i, ms in pairs(missing_sup) do
         if ms~=nil then
@@ -393,7 +401,7 @@ end
 function process_bp(bp)
     local res
     if bp.state=='initiated' then
-        bp.state='forward-collide-check'
+        bp.state='move-y-check'
 
     elseif bp.state=='forward-collide-check' then
         if check_forward_collide(bp.tids) then
@@ -473,8 +481,27 @@ function process_bp(bp)
         if res==false then return false end
 
         
-        bp.state='place-check'
+        bp.state='move-y-finish-check'
         save(bp)
+
+    elseif bp.state=='move-y-finish-check' then
+        -- check if y pos is correct
+        bp.y_list=get_y_list(bp)
+        bp.y_diff=get_turtles_y_diff(bp.tids, bp.by, bp.y_list)
+        local is_pass = true
+        for k,v in pairs(bp.y_diff) do
+            bp.y_diff[k]=v+2
+            if bp.y_diff[k]~=0 then
+                bp.state='move-y-check'
+                save(bp)
+                is_pass=false
+                break
+            end
+        end
+        if is_pass then
+            bp.state='place-check'
+            save(bp)
+        end
     elseif bp.state=='place-check' then
         local mat_list=get_mat_list(bp)
         bp.mat_list=mat_list
@@ -560,9 +587,18 @@ function move_all(ids, direction, dist)
         command={'turtle', direction}
     }
 
-    for i=1, dist do
-       rpc_all(ids, rpc) 
+    --for i=1, dist do
+    --   rpc_all(ids, rpc) 
+    --end
+    wraps = {}
+    for i, id in pairs(ids) do
+        wraps[i]=(
+            function()
+                return move(id, direction, dist)
+            end
+        )
     end
+    parallel.waitForAll(unpack(wraps))
     return true
 end
 
@@ -599,13 +635,17 @@ end
 
 function move_y(ids, ys)
     -- ys is each dist
+    local wraps={}
     for i, id in pairs(ids) do
         if ys[i]>0 then
-            move(id, 'up', ys[i])
+            wraps[i]=function()move(id, 'up', ys[i])end
         elseif ys[i]<0 then
-            move(id, 'down', math.abs(ys[i]))
+            wraps[i]=function()move(id, 'down', math.abs(ys[i]))end
+        else
+            wraps[i]=function() end
         end
     end
+    parallel.waitForAll(unpack(wraps))
     return true
 end
 
@@ -615,11 +655,19 @@ function place_down_all(tids, mat_list)
         args={}
     }
     local id,mes
+    local wraps={}
+    local wi=1
     for k,v in pairs(mat_list) do
         rpc.args[1]=v
-        id,mes=rpc_call(tids[k], rpc)
-        if id==nil then return false end
+        --id,mes=rpc_call(tids[k], rpc)
+        --if id==nil then return false end
+        wraps[wi]=function()rpc_call(tids[k], {
+            command={'place_down'},
+            args={v}
+        })end
+        wi=wi+1
     end
+    parallel.waitForAll(unpack(wraps))
     return true
 end
 
@@ -657,7 +705,7 @@ function reset_pos(bp)
     else
         bp.zdir=false
     end
-    bp.state='line-done'
+    bp.state='move-y-check'
     save(bp)
 end
 
@@ -683,7 +731,13 @@ function main()
         reset_pos(bp)
     elseif arg[1]=='mat' then
         bp=load_blueprint(bp)
-        send_chunk_mat_missing(bp)
+        send_chunk_mat_missing(bp, tonumber(arg[2]))
+    elseif arg[1]=='matloop' then
+        bp=load_blueprint(bp)
+        while true do
+            send_chunk_mat_missing(bp, tonumber(arg[2]))
+            sleep(3)
+        end
     elseif arg[1]==nil then
         bp=load_blueprint(bp)
         while bp.state~='all-done' do
