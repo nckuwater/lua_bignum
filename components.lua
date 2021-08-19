@@ -1,4 +1,8 @@
-gui = require('uu')
+local _G=_G
+local gui = require('uu')
+for i,k in pairs(gui) do
+    _G.i=k
+end
 
 comp = {}
 
@@ -106,7 +110,7 @@ end
 function new_TextPanel(x,y,w,h)
     local widget=gui.new_widget(x,y,w,h)
     widget.cursorPos={x=1,y=1}
-    widget.input_text='testi'
+    widget.input_text=''
     widget.text=widget.input_text
     widget.IsFocusable=true -- make this widget can be focus and get key events
     widget.OnKey=function(e,e1,e2,e3)TextPanel_KeyEventHandler(widget,e,e1,e2,e3)end

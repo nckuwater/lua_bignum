@@ -201,7 +201,16 @@ function getwinposwidget(win, x, y)
     end
     return obj, focus_obj, is_obj_win, is_focus_obj_win
 end
-
+function str_split (inputstr, sep)
+    if sep == nil then
+            sep = "%s"
+    end
+    local t={}
+    for str in string.gmatch(inputstr, "([^"..sep.."]+)") do
+            table.insert(t, str)
+    end
+    return t
+end
 function renderwidget(widget)
     if type(widget.render)=='function' then
         -- widget custom render function
@@ -220,7 +229,18 @@ function renderwidget(widget)
             widget.window.clear()
             widget.window.redraw()
             widget.window.setCursorPos(1,1)
-            if widget.text~=nil then widget.window.write(widget.text) end
+            if widget.text~=nil then 
+                splited = str_split(widget.text, '\n')
+                for i, text in pairs(splited) do
+                    if widget.text_align=='c' then
+                        widget.window.setCursorPos(
+                            math.floor((widget.w-#text)/2),i)
+                    else
+                        widget.window.setCursorPos(1,i)
+                    end
+                    widget.window.write(text) 
+                end
+            end
             if widget.img~=nil then 
                 local absx, absy=getabspos(widget)
                 paintutils.drawImage(widget.img, absx, absy)
@@ -301,6 +321,9 @@ function MouseEventHandler(win, event,e1,e2,e3)
 end
 
 function KeyEventHandler(win, event,e1,e2,e3)
+    --[[
+        send keyboard event to focusing widget.
+    ]]
     if win.focusing_widget~=nil then
         if event == 'key' then
             nilcall(win.focusing_widget.OnKey, event,e1,e2,e3)
@@ -332,6 +355,7 @@ function BroadcastEventHandler(win, event,e1,e2,e3)
             table.insert(todo_event, function() func(event,e1,e2,e3) end)
         end
     end
+    -- some parallel
     parallel.waitForAll(unpack(todo_event))
 
     -- Broadcast to subwindows by recursion
@@ -340,6 +364,7 @@ end
 
 function BroadcastEventToSubwindows(win, event,e1,e2,e3)
     -- traverse all children, 
+    -- only windows have this broadcast function, widgets don't
     -- if find window, call its BroadcastEventHandler.
     -- if find widget, call this function to traverse it.
     if type(win.child)=='table' then
@@ -377,7 +402,7 @@ end
 
 function TimerQueueHandler(win)
     -- Handle win timer queue.
-    -- this is the first start of a timer, the loop is controlled by TimerEventHandler.
+    -- this is the first fire of a timer, the loop is controlled by TimerEventHandler.
     -- timer_info={t=period, funct=funct}
     -- get a timer and connect the function
 
@@ -412,13 +437,19 @@ function EventHandler(win, event,e1,e2,e3)
         win.KeyEventHandler(event,e1,e2,e3)
         win.BroadcastEventHandler(event,e1,e2,e3)
     end
-    
+    --[[
+        no else here, because TimerQueue may be change above,
+        and we need to handle that(but actually TimerEventHandler can be in else)
+    ]]--
     win.TimerEventHandler(event,e1,e2,e3)
     win.TimerQueueHandler()
 
 end
 
 function EventPuller(win)
+    --[[
+        The mainloop function will call this
+    ]]--
     while true do
         if type(win.pullEvent)=='function' then
             event,e1,e2,e3 = win.pullEvent() -- free to change in win
@@ -429,27 +460,9 @@ function EventPuller(win)
         if win.is_terminate then
             return
         end
-        --[[if win.LastPullTime==nil then
-            win.LastPullTime=os.epoch('utc')
-        else
-            local PullTimer=os.epoch('utc')
-            local _rate=150
-            local _freq=(1000/_rate)
-            local diff=PullTimer-win.LastPullTime
-            win.LastPullTime=PullTimer
-            --term.clear()
-            --print(diff, _freq)
-            if diff <= _freq then
-                sleep((_freq-diff)/1000)
-            end
-        end]]--
-
-        --parallel.waitForAll(function() win.EventHandler(event,e1,e2,e3) end, function() EventPuller(win)end, function()nilcall(win.Render)end)
-        --parallel.waitForAll(function() win.EventHandler(event,e1,e2,e3) end, function() EventPuller(win)end)
 
         win.EventHandler(event,e1,e2,e3)
     end
-    --EventPuller(win)
 end
 
 function handlewindowevent(win, event,e1,e2,e3)
@@ -605,6 +618,9 @@ function mainloop_depr(win)
 end
 
 function RenderTimerHandler(win, event,e1,e2,e3)
+    --[[
+        Intercept the timer for render process before event handler.
+    ]]--
     -- return true if the event is for render-timer
     if event=='timer' and e1==win.RenderTimerId then
         nilcall(win.RenderTimerFunction)
@@ -657,13 +673,13 @@ end
 function new_window(x,y,w,h,widget,parent)
     local win={}
     win.is_window=true
-    if x==nil then x=1 end
-    if y==nil then y=1 end
-    if widget==nil then widget={} end
-    if parent==nil then parent=term.current() end
+    x = x or 1 
+    y = y or 1
+    widget = widget or {}
+    parent = parent or term.current()
     local twidth, theight=term.getSize()
-    if w==nil then w=twidth end
-    if h==nil then h=theight end
+    w = w or twidth
+    h = h or theight
 
     win.x=x
     win.y=y
@@ -680,7 +696,7 @@ function new_window(x,y,w,h,widget,parent)
     win.clicked_widget, win.clicked_focusable_widget=nil,nil
     win.focused_widget = nil
     win.clicked_widget = nil
-    win.focusing_widget = win -- default win
+    win.focusing_widget = win -- default to win
     win.prev_drag_widget = nil 
 
     --win.EventHandler=function(e,e1,e2,e3) handlewindowevent(win,e,e1,e2,e3) end
@@ -696,14 +712,6 @@ function new_window(x,y,w,h,widget,parent)
     win.TimerQueueHandler=    function() TimerQueueHandler(win) end
     
     win.Render=function() renderwidget(win) end
-    
---[[function EventHandler(win, event,e1,e2,e3)
-    win.MouseEventHandler(event,e1,e2,e3)
-    win.KeyEventHandler(event,e1,e2,e3)
-    win.BroadcastEventHandler(event,e1,e2,e3)
-    win.TimerEventHandler(event,e1,e2,e3)
-    win.TimerQueueHandler()
-end]]--
 
     return win
 end
@@ -1034,7 +1042,7 @@ function TextPanel_Render(widget)
         if widget.text~=nil then widget.window.write(widget.text) end
         widget.window.setCursorPos(widget.cursorPos.x, widget.cursorPos.y)
     end
-    -- Render children
+    -- Render children as default
     if widget.child ~= nil then
         for i,child in pairs(widget.child) do
             renderwidget(child)
@@ -1045,17 +1053,21 @@ end
 function new_TextPanel(x,y,w,h)
     local widget=new_widget(x,y,w,h)
     widget.cursorPos={x=1,y=1}
-    widget.input_text='testi'
+    -- input_text is the raw text
+    -- text is the text to display, if passworld_replace is not nil, this will be revised.
+    widget.input_text=''
     widget.text=widget.input_text
     widget.IsFocusable=true -- make this widget can be focus and get key events
     widget.OnKey=function(e,e1,e2,e3)TextPanel_KeyEventHandler(widget,e,e1,e2,e3)end
     widget.OnFocus=function(e,e1,e2,e3)TextPanel_OnFocus(widget,e,e1,e2,e3)end
     widget.OnChar=function(e,e1,e2,e3)TextPanel_CharEventHandler(widget,e,e1,e2,e3)end
     widget.OnBlur=function(e,e1,e2,e3)TextPanel_OnBlur(widget,e,e1,e2,e3)end
+    -- need to replace the render to prevent cursor from disappearing
     widget.render=function()TextPanel_Render(widget)end
 
     widget.bc=colors.lightBlue
-    widget.password_replace='#'
+    -- this is optional
+    -- widget.password_replace='#'
     
     return widget
 end
@@ -1088,6 +1100,9 @@ function is_subchild(widget, obj)
 end
 
 function new_dropdown(win, elements)
+    --[[
+        WARNING: dropdown should be the last widget in child list.
+    ]]
     local widget=new_widget()
     addwidget(win, widget)
     if elements==nil then
@@ -1146,12 +1161,12 @@ function test()
     --stopwindow(win1)
 end
 
-gui = {
+local gui = {
     new_window=new_window,
     new_widget=new_widget,
     addwidget=addwidget,
     bind=bind,
-    addtimer,
+    addtimer=addtimer,
     mainloop=mainloop,
     resize=resize,
 
